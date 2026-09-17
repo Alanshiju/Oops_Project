@@ -1,0 +1,9 @@
+@import "tailwindcss";
+.leaflet-routing-container {
+  display: none !important;
+}
+
+/* Hide Leaflet Routing Machine Text Box */
+.leaflet-routing-container {
+  display: none !important;
+}
