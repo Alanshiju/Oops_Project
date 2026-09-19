@@ -2,7 +2,7 @@
 package com.campus;
 
 public class Driver extends User {
-    private String vehicleDetails;
+    final private String vehicleDetails;
 
     public Driver(int userId, String name, String email, String phoneNumber, String vehicleDetails) {
         // The 'super' keyword calls the constructor of the parent 'User' class

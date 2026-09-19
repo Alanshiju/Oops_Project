@@ -40,6 +40,7 @@ const DriverDashboard = () => {
   const mapInstance = useRef(null);
   const routingControlRef = useRef(null);
   const passengerMarkersRef = useRef([]);
+  const driverSelfMarkerRef = useRef(null);
 
   const [routeGeometry, setRouteGeometry] = useState([]);
   const [seats, setSeats] = useState(3);
@@ -48,12 +49,19 @@ const DriverDashboard = () => {
   const [distanceKm, setDistanceKm] = useState(0);
   const [isFreeRide, setIsFreeRide] = useState(false);
   const [rideStatus, setRideStatus] = useState("PENDING");
+  const rideStatusRef = useRef("PENDING");
+
+  useEffect(() => {
+    rideStatusRef.current = rideStatus;
+  }, [rideStatus]);
 
   // Chat & SOS States
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
+  const [selectedChatPassenger, setSelectedChatPassenger] = useState("");
   const wsRef = useRef(null);
+  const watchIdRef = useRef(null);
 
   const [vehicle, setVehicle] = useState(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
@@ -68,8 +76,74 @@ const DriverDashboard = () => {
   const [selectedRouteIndex, setSelectedRouteIndex] = useState("");
   const [bookings, setBookings] = useState([]);
 
-  const collegeLocation = L.latLng(10.728, 76.2792);
+  // Flags & Refs for auto-loading and hydration
+  const [isAutoLoadingRoute, setIsAutoLoadingRoute] = useState(false);
+  const isAutoLoadingRouteRef = useRef(false);
+  const pendingActiveRouteRef = useRef(null);
+  const staticPolylineRef = useRef(null);
 
+  const [collegeLocation, setCollegeLocation] = useState(
+    L.latLng(10.728, 76.2792),
+  );
+  const [isDestinationLoaded, setIsDestinationLoaded] = useState(false);
+  const [estimatedDurationMins, setEstimatedDurationMins] = useState(0);
+
+  // Task 4 & Constraint 4: Fetch Dynamic Admin CMS Destination before map initialization
+  useEffect(() => {
+    fetch("http://localhost:7070/api/settings/destination")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.lat && data.lng) {
+          setCollegeLocation(L.latLng(data.lat, data.lng));
+        }
+        setIsDestinationLoaded(true);
+      })
+      .catch((err) => {
+        console.error("Error loading destination, using fallback:", err);
+        setIsDestinationLoaded(true);
+      });
+  }, []);
+
+  const setAutoLoading = (val) => {
+    isAutoLoadingRouteRef.current = val;
+    setIsAutoLoadingRoute(val);
+  };
+
+  const fetchFavorites = (isInitial = false) => {
+    fetch("http://localhost:7070/api/user/route/favorite", {
+      credentials: "include",
+    })
+      .then((res) => {
+        if (res.ok) return res.json();
+        return null;
+      })
+      .then((data) => {
+        if (data && Array.isArray(data)) {
+          setFavoriteRoutes(data);
+          // Only auto-load favorite route if not already in an active ride
+          if (
+            isInitial &&
+            data.length > 0 &&
+            routingControlRef.current &&
+            !pendingActiveRouteRef.current
+          ) {
+            const lastRoute = data[data.length - 1];
+            if (lastRoute.waypoints && lastRoute.waypoints.length > 0) {
+              const waypoints = lastRoute.waypoints.map((coord) =>
+                L.latLng(coord.lat, coord.lng),
+              );
+              setAutoLoading(true);
+              routingControlRef.current.setWaypoints(waypoints);
+              mapInstance.current.fitBounds(L.latLngBounds(waypoints));
+              setTimeout(() => setAutoLoading(false), 1000);
+            }
+          }
+        }
+      })
+      .catch((err) => console.error(err));
+  };
+
+  // Task 4: Complete State Hydration on Refresh & Fix Dummy Ride ID bug
   useEffect(() => {
     // Check if user already has an active ride
     fetch("http://localhost:7070/api/user/active-status", {
@@ -77,10 +151,48 @@ const DriverDashboard = () => {
     })
       .then((res) => res.json())
       .then((data) => {
-        if (data.isDriver && data.driverRideId && data.driverRideId !== -1) {
+        if (
+          data.isDriver &&
+          data.driverRideId &&
+          data.driverRideId !== -1 &&
+          data.driverRideId !== 999
+        ) {
           setCurrentRideId(data.driverRideId);
-        } else if (data.isDriver) {
-          setCurrentRideId(999);
+          if (data.rideStatus) {
+            setRideStatus(data.rideStatus);
+          }
+          if (data.distance_km !== undefined && data.distance_km !== null) {
+            setDistanceKm(data.distance_km);
+          }
+          if (data.seats !== undefined && data.seats !== null) {
+            setSeats(data.seats);
+          }
+
+          if (data.route_geometry) {
+            const geom =
+              typeof data.route_geometry === "string"
+                ? JSON.parse(data.route_geometry)
+                : data.route_geometry;
+            if (Array.isArray(geom) && geom.length >= 2) {
+              setRouteGeometry(geom);
+              pendingActiveRouteRef.current = geom;
+              if (routingControlRef.current) {
+                const waypoints = [
+                  L.latLng(geom[0].lat, geom[0].lng),
+                  L.latLng(
+                    geom[geom.length - 1].lat,
+                    geom[geom.length - 1].lng,
+                  ),
+                ];
+                setAutoLoading(true);
+                routingControlRef.current.setWaypoints(waypoints);
+                if (mapInstance.current) {
+                  mapInstance.current.fitBounds(L.latLngBounds(waypoints));
+                }
+                setTimeout(() => setAutoLoading(false), 1000);
+              }
+            }
+          }
         }
       });
 
@@ -100,13 +212,19 @@ const DriverDashboard = () => {
       });
   }, []);
 
+  // Map Initialization (Constraint 4: Blocked until isDestinationLoaded is true)
   useEffect(() => {
+    if (!isDestinationLoaded) return;
+    if (!mapRef.current) return;
+
     if (!mapInstance.current) {
       mapInstance.current = L.map(mapRef.current).setView(
         [10.5276, 76.2144],
         11,
       );
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          attribution: 'Tiles &copy; Esri',
         attribution: "© OpenStreetMap contributors",
       }).addTo(mapInstance.current);
 
@@ -121,9 +239,11 @@ const DriverDashboard = () => {
           styles: [{ color: "#111827", weight: 6, opacity: 0.9 }],
         },
         createMarker: function (i, wp, nWps) {
+          // Task 4: Forcefully lock the destination marker from being dragged
+          const isDestination = i === nWps - 1;
           return L.marker(wp.latLng, {
             icon: i === 0 ? carIcon : pulsingDot,
-            draggable: true,
+            draggable: !isDestination,
           });
         },
       }).addTo(mapInstance.current);
@@ -132,23 +252,46 @@ const DriverDashboard = () => {
         setRouteGeometry(e.routes[0].coordinates);
         const distMeters = e.routes[0].summary.totalDistance;
         setDistanceKm(parseFloat((distMeters / 1000).toFixed(1)));
+        // Task 3: Capture estimated duration from LRM
+        const durationMins = Math.round(
+          (e.routes[0].summary.totalTime || 0) / 60,
+        );
+        setEstimatedDurationMins(durationMins);
       });
 
+      // Task 3 & 4: Bypass 3-waypoint restriction during auto-loading & lock destination waypoint
       routingControlRef.current.on("waypointschanged", (e) => {
+        if (isAutoLoadingRouteRef.current) {
+          return;
+        }
         const waypoints = e.waypoints.filter((wp) => wp.latLng !== null);
         if (waypoints.length > 3) {
-          alert(
+          toast(
             "Route too complex! Please select only ONE custom turning point.",
           );
           routingControlRef.current.setWaypoints([
             waypoints[0].latLng,
             collegeLocation,
           ]);
+          return;
+        }
+        // Task 4: Forcefully lock the last waypoint to the fetched collegeLocation
+        if (waypoints.length > 0) {
+          const lastWp = waypoints[waypoints.length - 1];
+          if (
+            lastWp.latLng &&
+            (Math.abs(lastWp.latLng.lat - collegeLocation.lat) > 0.0001 ||
+              Math.abs(lastWp.latLng.lng - collegeLocation.lng) > 0.0001)
+          ) {
+            waypoints[waypoints.length - 1] =
+              L.Routing.waypoint(collegeLocation);
+            routingControlRef.current.setWaypoints(waypoints);
+          }
         }
       });
 
       routingControlRef.current.on("routingerror", () => {
-        alert(
+        toast(
           "Invalid route! Cannot drive through this area. Reverting to main road.",
         );
         const waypoints = routingControlRef.current.getWaypoints();
@@ -157,15 +300,87 @@ const DriverDashboard = () => {
           collegeLocation,
         ]);
       });
+
+      // If active route is already retrieved, hydrate it; otherwise auto-load favorite route
+      if (
+        pendingActiveRouteRef.current &&
+        pendingActiveRouteRef.current.length >= 2
+      ) {
+        const geom = pendingActiveRouteRef.current;
+        const waypoints = [
+          L.latLng(geom[0].lat, geom[0].lng),
+          L.latLng(geom[geom.length - 1].lat, geom[geom.length - 1].lng),
+        ];
+        setAutoLoading(true);
+        routingControlRef.current.setWaypoints(waypoints);
+        mapInstance.current.fitBounds(L.latLngBounds(waypoints));
+        setTimeout(() => setAutoLoading(false), 1000);
+      } else {
+        fetchFavorites(true);
+      }
     }
-  }, []);
+
+    return () => {
+      // Constraint 3: Prevent polyline memory leaks
+      if (staticPolylineRef.current) {
+        staticPolylineRef.current.remove();
+        staticPolylineRef.current = null;
+      }
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+      }
+    };
+  }, [isDestinationLoaded]);
+
+  // Task 1: Bulletproof Route Lock (Polyline Swap) & Constraint 3: Prevent Polyline Memory Leaks
+  useEffect(() => {
+    const isLocked =
+      rideStatus !== "PENDING" ||
+      (currentRideId !== null && currentRideId !== -1 && currentRideId !== 999);
+
+    if (isLocked && mapInstance.current) {
+      // Completely remove LRM routing control to eliminate draggable waypoints UI
+      if (routingControlRef.current) {
+        try {
+          mapInstance.current.removeControl(routingControlRef.current);
+        } catch (e) {
+          console.error("Error removing routing control:", e);
+        }
+        routingControlRef.current = null;
+      }
+
+      // Draw static polyline if routeGeometry exists
+      if (routeGeometry && routeGeometry.length >= 2) {
+        if (staticPolylineRef.current) {
+          staticPolylineRef.current.remove();
+          staticPolylineRef.current = null;
+        }
+        const latlngs = routeGeometry.map((c) => [c.lat, c.lng]);
+        staticPolylineRef.current = L.polyline(latlngs, {
+          color: "#111827",
+          weight: 6,
+          opacity: 0.9,
+        }).addTo(mapInstance.current);
+        mapInstance.current.fitBounds(staticPolylineRef.current.getBounds(), {
+          padding: [40, 40],
+        });
+      }
+    }
+
+    return () => {
+      // Constraint 3: Proactively remove polyline ref on unmount or re-render
+      if (staticPolylineRef.current) {
+        staticPolylineRef.current.remove();
+        staticPolylineRef.current = null;
+      }
+    };
+  }, [rideStatus, currentRideId, routeGeometry]);
 
   useEffect(() => {
-    let locationPushInterval = null;
     let liveDataInterval = null;
-    let isPushingLocation = false;
 
-    if (currentRideId) {
+    if (currentRideId && currentRideId !== -1 && currentRideId !== 999) {
       // Initialize native WebSocket connection
       wsRef.current = new WebSocket(
         `ws://localhost:7070/ws/rides/${currentRideId}/live`,
@@ -178,9 +393,9 @@ const DriverDashboard = () => {
           if (data.type === "CHAT_MESSAGE") {
             setChatMessages((prev) => [...prev, data]);
           } else if (data.type === "SOS_ALERT") {
-            alert("🚨 SOS EMERGENCY TRIGGERED FOR THIS RIDE!");
+            toast.error("SOS EMERGENCY TRIGGERED FOR THIS RIDE!");
           } else if (data.type === "NEW_BOOKING_REQUEST") {
-            alert("🔔 New booking request from " + data.name);
+            toast("🔔 New booking request from " + data.name);
             fetchBookings(); // Fetch new bookings immediately
           }
         } catch (e) {
@@ -206,40 +421,45 @@ const DriverDashboard = () => {
         .then((data) => setChatMessages(data))
         .catch((err) => console.error(err));
 
-      // 1. Efficient non-blocking location push every 2.5s
-      locationPushInterval = setInterval(() => {
-        if ("geolocation" in navigator && !isPushingLocation) {
-          isPushingLocation = true;
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              fetch("http://localhost:7070/api/location/update", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "include",
-                body: JSON.stringify({
-                  rideId: currentRideId,
-                  lat: position.coords.latitude,
-                  lng: position.coords.longitude,
-                }),
-              })
-                .catch((err) =>
-                  console.error("Error pushing driver location:", err),
-                )
-                .finally(() => {
-                  isPushingLocation = false;
-                });
-            },
-            (error) => {
-              console.warn(
-                "Geolocation warning in driver push:",
-                error.message,
-              );
-              isPushingLocation = false;
-            },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 1000 },
-          );
-        }
-      }, 2500);
+      // 1. Efficient hardware-optimized GPS telemetry
+      if ("geolocation" in navigator) {
+        watchIdRef.current = navigator.geolocation.watchPosition(
+          (position) => {
+            const newPos = [
+              position.coords.latitude,
+              position.coords.longitude,
+            ];
+
+            // Task 5: Driver Self-Marker
+            if (!driverSelfMarkerRef.current) {
+              if (mapInstance.current) {
+                driverSelfMarkerRef.current = L.marker(newPos, {
+                  icon: carIcon,
+                }).addTo(mapInstance.current);
+              }
+            } else {
+              driverSelfMarkerRef.current.setLatLng(newPos);
+            }
+
+            fetch("http://localhost:7070/api/location/update", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                rideId: currentRideId,
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              }),
+            }).catch((err) =>
+              console.error("Error pushing driver location:", err),
+            );
+          },
+          (error) => {
+            console.warn("Geolocation warning in driver push:", error.message);
+          },
+          { enableHighAccuracy: true, maximumAge: 1000 },
+        );
+      }
 
       // 2. Poll live passengers and seat updates every 3s
       liveDataInterval = setInterval(() => {
@@ -257,25 +477,36 @@ const DriverDashboard = () => {
               });
             }
 
-            // Plot passengers
-            if (mapInstance.current && data.passengers) {
-              passengerMarkersRef.current.forEach((m) =>
-                mapInstance.current.removeLayer(m),
-              );
-              passengerMarkersRef.current = [];
-              data.passengers.forEach((p) => {
-                if (p && p.lat && p.lng) {
-                  const m = L.marker([p.lat, p.lng], {
-                    icon: passengerIcon,
-                  }).addTo(mapInstance.current);
-                  if (p.name)
-                    m.bindTooltip(p.name, {
-                      permanent: true,
-                      direction: "top",
-                    });
-                  passengerMarkersRef.current.push(m);
-                }
-              });
+            // Plot passengers (Task 3: Only when IN_TRANSIT)
+            if (rideStatusRef.current === "IN_TRANSIT") {
+              if (mapInstance.current && data.passengers) {
+                passengerMarkersRef.current.forEach((m) =>
+                  mapInstance.current.removeLayer(m),
+                );
+                passengerMarkersRef.current = [];
+                data.passengers.forEach((p) => {
+                  if (p && p.lat && p.lng) {
+                    const m = L.marker([p.lat, p.lng], {
+                      icon: passengerIcon,
+                    }).addTo(mapInstance.current);
+                    if (p.name)
+                      m.bindTooltip(p.name, {
+                        permanent: true,
+                        direction: "top",
+                      });
+                    passengerMarkersRef.current.push(m);
+                  }
+                });
+              }
+            } else {
+              if (passengerMarkersRef.current) {
+                passengerMarkersRef.current.forEach((m) => {
+                  if (mapInstance.current) {
+                    mapInstance.current.removeLayer(m);
+                  }
+                });
+                passengerMarkersRef.current = [];
+              }
             }
           })
           .catch((err) => console.error("Error fetching live ride data:", err));
@@ -286,8 +517,9 @@ const DriverDashboard = () => {
       if (wsRef.current) {
         wsRef.current.close();
       }
-      if (locationPushInterval) {
-        clearInterval(locationPushInterval);
+      if (watchIdRef.current !== null && "geolocation" in navigator) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
       if (liveDataInterval) {
         clearInterval(liveDataInterval);
@@ -306,25 +538,25 @@ const DriverDashboard = () => {
       .then((res) => res.json())
       .then((data) => {
         if (data.message) {
-          alert("✅ " + data.message);
+          toast.success(data.message);
           setVehicle(vehicleForm);
           setShowVehicleModal(false);
         } else {
-          alert("❌ " + data.error);
+          toast.error(data.error);
         }
       });
   };
 
   const handlePublishRide = () => {
     if (!vehicle || !vehicle.make || !vehicle.model || !vehicle.licensePlate) {
-      alert(
+      toast(
         "⚠️ You must complete your Vehicle Profile before offering a ride.",
       );
       setShowVehicleModal(true);
       return;
     }
     if (routeGeometry.length === 0) {
-      alert("Please wait for the route to calculate before publishing.");
+      toast("Please wait for the route to calculate before publishing.");
       return;
     }
 
@@ -347,26 +579,21 @@ const DriverDashboard = () => {
               routeGeometry: routeGeometry,
               distanceKm: distanceKm,
               isFreeRide: isFreeRide,
+              estimatedDurationMins: estimatedDurationMins,
             }),
           })
             .then((resRoute) => resRoute.json())
             .then((dataRoute) => {
               if (dataRoute.message) {
                 setCurrentRideId(newRideId);
-                if (
-                  routingControlRef.current &&
-                  routingControlRef.current.getPlan()
-                ) {
-                  routingControlRef.current.getPlan().options.draggableWaypoints = false;
-                  routingControlRef.current.getPlan().options.addWaypoints = false;
-                }
-                alert("✅ Ride Published and Route Saved! You are now live.");
+                setRideStatus("PENDING");
+                toast.success("Ride Published and Route Saved! You are now live.");
               } else {
-                alert("❌ Failed to save route: " + dataRoute.error);
+                toast("❌ Failed to save route: " + dataRoute.error);
               }
             });
         } else {
-          alert("❌ " + data.error);
+          toast.error(data.error);
         }
       });
   };
@@ -383,7 +610,7 @@ const DriverDashboard = () => {
         if (data.message) {
           setRideStatus(newStatus);
           if (newStatus === "COMPLETED") {
-            alert(
+            toast(
               "✅ Ride Completed! Showing summary...\nDistance: " +
                 distanceKm +
                 "km\nEarnings: " +
@@ -395,14 +622,125 @@ const DriverDashboard = () => {
             setRideStatus("PENDING");
             setRouteGeometry([]);
             setDistanceKm(0);
+            pendingActiveRouteRef.current = null;
+            ensureRoutingControl();
+            if (favoriteRoutes && favoriteRoutes.length > 0) {
+              const latestFav = favoriteRoutes[favoriteRoutes.length - 1];
+              handleLoadFavorite(latestFav);
+            } else if (routingControlRef.current) {
+              const waypoints = routingControlRef.current.getWaypoints();
+              if (waypoints && waypoints.length > 0 && waypoints[0].latLng) {
+                routingControlRef.current.setWaypoints([
+                  waypoints[0].latLng,
+                  collegeLocation,
+                ]);
+              } else {
+                routingControlRef.current.setWaypoints([
+                  L.latLng(10.5276, 76.2144),
+                  collegeLocation,
+                ]);
+              }
+            }
           }
         } else {
-          alert("❌ " + data.error);
+          toast.error(data.error);
         }
       });
   };
 
+  const handleRefocusMap = () => {
+    if (mapInstance.current) {
+      const markers = [];
+      if (driverSelfMarkerRef.current)
+        markers.push(driverSelfMarkerRef.current);
+      if (passengerMarkersRef.current) {
+        passengerMarkersRef.current.forEach((m) => markers.push(m));
+      }
+      if (markers.length > 0) {
+        const group = new L.featureGroup(markers);
+        mapInstance.current.fitBounds(group.getBounds(), { padding: [50, 50] });
+      }
+    }
+  };
+
+  const ensureRoutingControl = () => {
+    if (staticPolylineRef.current) {
+      staticPolylineRef.current.remove();
+      staticPolylineRef.current = null;
+    }
+
+    if (!routingControlRef.current && mapInstance.current) {
+      routingControlRef.current = L.Routing.control({
+        waypoints: [],
+        routeWhileDragging: true,
+        addWaypoints: true,
+        showAlternatives: false,
+        fitSelectedRoutes: true,
+        show: false,
+        lineOptions: {
+          styles: [{ color: "#111827", weight: 6, opacity: 0.9 }],
+        },
+        createMarker: function (i, wp, nWps) {
+          const isDestination = i === nWps - 1;
+          return L.marker(wp.latLng, {
+            icon: i === 0 ? carIcon : pulsingDot,
+            draggable: !isDestination,
+          });
+        },
+      }).addTo(mapInstance.current);
+
+      routingControlRef.current.on("routesfound", (e) => {
+        setRouteGeometry(e.routes[0].coordinates);
+        const distMeters = e.routes[0].summary.totalDistance;
+        setDistanceKm(parseFloat((distMeters / 1000).toFixed(1)));
+        const durationMins = Math.round(
+          (e.routes[0].summary.totalTime || 0) / 60,
+        );
+        setEstimatedDurationMins(durationMins);
+      });
+
+      routingControlRef.current.on("waypointschanged", (e) => {
+        if (isAutoLoadingRouteRef.current) return;
+        const waypoints = e.waypoints.filter((wp) => wp.latLng !== null);
+        if (waypoints.length > 3) {
+          toast(
+            "Route too complex! Please select only ONE custom turning point.",
+          );
+          routingControlRef.current.setWaypoints([
+            waypoints[0].latLng,
+            collegeLocation,
+          ]);
+          return;
+        }
+        if (waypoints.length > 0) {
+          const lastWp = waypoints[waypoints.length - 1];
+          if (
+            lastWp.latLng &&
+            (Math.abs(lastWp.latLng.lat - collegeLocation.lat) > 0.0001 ||
+              Math.abs(lastWp.latLng.lng - collegeLocation.lng) > 0.0001)
+          ) {
+            waypoints[waypoints.length - 1] =
+              L.Routing.waypoint(collegeLocation);
+            routingControlRef.current.setWaypoints(waypoints);
+          }
+        }
+      });
+
+      routingControlRef.current.on("routingerror", () => {
+        toast(
+          "Invalid route! Cannot drive through this area. Reverting to main road.",
+        );
+        const waypoints = routingControlRef.current.getWaypoints();
+        routingControlRef.current.setWaypoints([
+          waypoints[0].latLng,
+          collegeLocation,
+        ]);
+      });
+    }
+  };
+
   const handleDrawNew = () => {
+    ensureRoutingControl();
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -410,60 +748,45 @@ const DriverDashboard = () => {
             position.coords.latitude,
             position.coords.longitude,
           );
-          routingControlRef.current.setWaypoints([liveStart, collegeLocation]);
-          mapInstance.current.setView(liveStart, 12);
+          if (routingControlRef.current) {
+            routingControlRef.current.setWaypoints([
+              liveStart,
+              collegeLocation,
+            ]);
+          }
+          if (mapInstance.current) {
+            mapInstance.current.setView(liveStart, 12);
+          }
         },
         (err) => console.error(err),
         { enableHighAccuracy: true },
       );
     } else {
-      routingControlRef.current.setWaypoints([
-        L.latLng(10.5276, 76.2144),
-        collegeLocation,
-      ]);
+      if (routingControlRef.current) {
+        routingControlRef.current.setWaypoints([
+          L.latLng(10.5276, 76.2144),
+          collegeLocation,
+        ]);
+      }
     }
   };
 
-  const fetchFavorites = (isInitial = false) => {
-    fetch("http://localhost:7070/api/user/route/favorite", {
-      credentials: "include",
-    })
-      .then((res) => {
-        if (res.ok) return res.json();
-        return null;
-      })
-      .then((data) => {
-        if (data && Array.isArray(data)) {
-          setFavoriteRoutes(data);
-          if (isInitial && data.length > 0 && routingControlRef.current) {
-            const lastRoute = data[data.length - 1];
-            if (lastRoute.waypoints && lastRoute.waypoints.length > 0) {
-              const waypoints = lastRoute.waypoints.map((coord) =>
-                L.latLng(coord.lat, coord.lng),
-              );
-              routingControlRef.current.setWaypoints(waypoints);
-              mapInstance.current.fitBounds(L.latLngBounds(waypoints));
-            }
-          }
-        }
-      })
-      .catch((err) => console.error(err));
-  };
+  const handleLoadFavorite = (indexOrObj) => {
+    if (indexOrObj === "") return;
+    let data;
+    if (typeof indexOrObj === "object" && indexOrObj.waypoints) {
+      data = indexOrObj.waypoints;
+    } else {
+      if (!favoriteRoutes[indexOrObj]) return;
+      data = favoriteRoutes[indexOrObj].waypoints;
+    }
 
-  useEffect(() => {
-    // Wait slightly for map initialization before auto-loading
-    setTimeout(() => {
-      fetchFavorites(true);
-    }, 500);
-  }, []);
-
-  const handleLoadFavorite = (index) => {
-    if (index === "" || !favoriteRoutes[index]) return;
-    const data = favoriteRoutes[index].waypoints;
-    if (data && data.length > 0) {
+    if (data && data.length > 0 && routingControlRef.current) {
       const waypoints = data.map((coord) => L.latLng(coord.lat, coord.lng));
+      setAutoLoading(true);
       routingControlRef.current.setWaypoints(waypoints);
       mapInstance.current.fitBounds(L.latLngBounds(waypoints));
+      setTimeout(() => setAutoLoading(false), 1000);
     }
     setSelectedRouteIndex(""); // reset
   };
@@ -475,7 +798,7 @@ const DriverDashboard = () => {
       .filter((wp) => wp.latLng)
       .map((wp) => ({ lat: wp.latLng.lat, lng: wp.latLng.lng }));
     if (waypoints.length < 2) {
-      alert("Please draw a route first!");
+      toast("Please draw a route first!");
       return;
     }
 
@@ -494,9 +817,9 @@ const DriverDashboard = () => {
       .then((res) => res.json())
       .then((data) => {
         if (data.message) {
-          alert("⭐ " + data.message);
+          toast.success(data.message);
           fetchFavorites();
-        } else alert("❌ " + data.error);
+        } else toast.error(data.error);
       });
   };
 
@@ -522,17 +845,30 @@ const DriverDashboard = () => {
       .then((res) => res.json())
       .then((data) => {
         if (data.message) {
-          alert("✅ " + data.message);
+          toast.success(data.message);
           setCurrentRideId(null);
+          setRideStatus("PENDING");
           setRouteGeometry([]);
-          if (routingControlRef.current) {
+          pendingActiveRouteRef.current = null;
+          ensureRoutingControl();
+          if (favoriteRoutes && favoriteRoutes.length > 0) {
+            const latestFav = favoriteRoutes[favoriteRoutes.length - 1];
+            handleLoadFavorite(latestFav);
+          } else if (routingControlRef.current) {
             const waypoints = routingControlRef.current.getWaypoints();
-            routingControlRef.current.setWaypoints([
-              waypoints[0].latLng,
-              collegeLocation,
-            ]);
+            if (waypoints && waypoints.length > 0 && waypoints[0].latLng) {
+              routingControlRef.current.setWaypoints([
+                waypoints[0].latLng,
+                collegeLocation,
+              ]);
+            } else {
+              routingControlRef.current.setWaypoints([
+                L.latLng(10.5276, 76.2144),
+                collegeLocation,
+              ]);
+            }
           }
-        } else alert("❌ " + data.error);
+        } else toast.error(data.error);
       });
   };
 
@@ -540,10 +876,16 @@ const DriverDashboard = () => {
     e.preventDefault();
     if (!chatInput.trim() || !wsRef.current || !currentRideId) return;
 
+    if (!selectedChatPassenger) {
+      toast("Please select a passenger to chat with.");
+      return;
+    }
+
     const msg = {
       type: "CHAT_MESSAGE",
-      senderId: -1, // Backend handles token validation, but UI just needs to know it's a driver message
+      senderId: -1,
       senderName: "Driver",
+      targetUserId: selectedChatPassenger,
       text: chatInput.trim(),
       timestamp: new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -576,8 +918,8 @@ const DriverDashboard = () => {
       })
         .then((res) => res.json())
         .then((data) => {
-          if (data.message) alert(data.message);
-          else alert(data.error);
+          if (data.message) toast(data.message);
+          else toast(data.error);
         });
     });
   };
@@ -596,13 +938,13 @@ const DriverDashboard = () => {
             .then((res) => res.json())
             .then((data) => setBookings(data || []));
         } else {
-          alert("❌ " + data.error);
+          toast.error(data.error);
         }
       });
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-[90vh] p-4 gap-6 bg-slate-50">
+    <div className="flex flex-col-reverse lg:flex-row gap-6 max-w-7xl mx-auto p-4">
       {/* Left Column: Header + Map + Map Controls */}
       <div className="flex flex-col flex-grow lg:w-[70%] h-full gap-4">
         <div className="flex justify-between items-end bg-white p-4 rounded-xl shadow-sm border border-slate-200">
@@ -657,10 +999,21 @@ const DriverDashboard = () => {
           </button>
         </div>
 
-        <div
-          ref={mapRef}
-          className="w-full flex-grow rounded-xl shadow-lg border-4 border-white z-0 min-h-[400px]"
-        ></div>
+        <div className="relative w-full flex-grow z-0 min-h-[400px]">
+          <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={handleRefocusMap}
+              className="bg-white px-3 py-1.5 rounded shadow font-bold text-blue-900 hover:bg-slate-50 border border-slate-200 text-xs active:scale-95"
+            >
+              Refocus Map
+            </button>
+          </div>
+          <div
+            ref={mapRef}
+            className="w-full h-[45vh] lg:h-[650px] rounded-[2rem] overflow-hidden shadow-2xl shadow-indigo-900/20 z-0"
+          ></div>
+        </div>
       </div>
 
       {/* Right Column: Scrollable Sidebar */}
@@ -757,7 +1110,7 @@ const DriverDashboard = () => {
                         onClick={() =>
                           handleBookingAction(b.bookingId, "accept")
                         }
-                        className="flex-1 bg-green-500 text-white text-xs font-bold py-1 rounded"
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-2 rounded-lg transform transition-transform active:scale-95 shadow-sm hover:shadow-md"
                       >
                         Accept
                       </button>
@@ -765,7 +1118,7 @@ const DriverDashboard = () => {
                         onClick={() =>
                           handleBookingAction(b.bookingId, "reject")
                         }
-                        className="flex-1 bg-red-500 text-white text-xs font-bold py-1 rounded"
+                        className="flex-1 bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-2 rounded-lg transform transition-transform active:scale-95 shadow-sm hover:shadow-md"
                       >
                         Reject
                       </button>
@@ -802,7 +1155,7 @@ const DriverDashboard = () => {
               {rideStatus === "PENDING" && (
                 <button
                   onClick={() => handleUpdateStatus("IN_TRANSIT")}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow"
+                  className="w-full bg-gradient-to-br from-indigo-500 to-indigo-800 text-white font-black py-3.5 px-6 rounded-full hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-indigo-900/25"
                 >
                   🚗 Start Driving
                 </button>
@@ -922,55 +1275,60 @@ const DriverDashboard = () => {
       {currentRideId && (
         <div className="absolute bottom-10 right-10 z-[2000] flex flex-col items-end">
           {isChatOpen ? (
-            <div className="bg-white w-80 h-96 rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-              <div
-                className="bg-blue-600 text-white p-3 font-bold flex justify-between items-center cursor-pointer"
-                onClick={() => setIsChatOpen(false)}
-              >
-                <span>Ride Chat</span>
-                <span>▼</span>
-              </div>
-              <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2 bg-slate-50">
-                {chatMessages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`max-w-[80%] p-2 rounded-lg text-sm ${msg.senderName === "Driver" ? "bg-blue-100 self-end rounded-br-none" : "bg-white border self-start rounded-bl-none"}`}
-                  >
-                    <div className="font-bold text-xs text-slate-500">
-                      {msg.senderName}
-                    </div>
-                    <div>{msg.text}</div>
-                    <div className="text-[10px] text-slate-400 text-right mt-1">
-                      {msg.timestamp}
-                    </div>
-                  </div>
-                ))}
+            <div className="bg-white w-80 h-[28rem] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden mb-4">
                 <div
-                  ref={(el) => {
-                    if (el) el.scrollIntoView({ behavior: "smooth" });
-                  }}
-                ></div>
-              </div>
-              <form
-                onSubmit={handleSendChatMessage}
-                className="p-2 border-t flex gap-2 bg-white"
-              >
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Type message..."
-                  className="flex-1 p-2 border rounded text-sm"
-                />
-                <button
-                  type="submit"
-                  className="bg-blue-600 text-white px-3 rounded font-bold"
+                  className="bg-indigo-600 text-white p-4 font-bold flex justify-between items-center cursor-pointer shadow-sm"
+                  onClick={() => setIsChatOpen(false)}
                 >
-                  Send
-                </button>
-              </form>
-            </div>
-          ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">💬</span>
+                    <span>Ride Chat</span>
+                  </div>
+                  <button className="hover:bg-indigo-500 rounded-full w-8 h-8 flex items-center justify-center transition-colors">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-slate-50">
+                  {chatMessages.map((msg, i) => {
+                    const isSelf = msg.senderName === "Student" || msg.senderName === "Driver" || (profile && msg.senderName === profile.name);
+                    return (
+                      <div
+                        key={i}
+                        className={`max-w-[85%] p-3 text-sm shadow-sm ${isSelf ? "bg-indigo-600 text-white self-end rounded-t-2xl rounded-l-2xl rounded-br-none" : "bg-gray-100 text-slate-800 self-start rounded-t-2xl rounded-r-2xl rounded-bl-none"}`}
+                      >
+                        <div className={`font-bold text-[10px] mb-1 ${isSelf ? 'text-indigo-200' : 'text-slate-500'}`}>
+                          {msg.senderName}
+                        </div>
+                        <div className="leading-relaxed">{msg.text}</div>
+                        <div className={`text-[9px] text-right mt-1 ${isSelf ? 'text-indigo-300' : 'text-slate-400'}`}>
+                          {msg.timestamp}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={(el) => { if (el) el.scrollIntoView({ behavior: "smooth" }); }}></div>
+                </div>
+                <form
+                  onSubmit={handleSendChatMessage}
+                  className="p-3 bg-white border-t border-slate-100 flex gap-2 items-center"
+                >
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type a message..."
+                    className="flex-1 p-3 bg-slate-100 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim()}
+                    className="bg-indigo-600 disabled:bg-slate-300 text-white w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-95 shadow-md"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 ml-1">
+                      <path d="M3.478 2.404a.75.75 0 00-.926.941l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.404z" />
+                    </svg>
+                  </button>
+                </form>
+              </div>
+            ) : (
             <button
               onClick={() => setIsChatOpen(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-2xl flex items-center justify-center animate-bounce relative"

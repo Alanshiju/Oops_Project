@@ -7,7 +7,22 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.mindrot.jbcrypt.BCrypt;
+
 public class UserDAO {
+
+    // Verify login password using BCrypt with plaintext fallback
+    public boolean verifyLogin(String plaintext, String hashed) {
+        if (plaintext == null || hashed == null) {
+            return false;
+        }
+        try {
+            return BCrypt.checkpw(plaintext, hashed);
+        } catch (IllegalArgumentException e) {
+            // Fallback for legacy unhashed passwords
+            return plaintext.equals(hashed);
+        }
+    }
 
     // 1. Fetch users waiting for admin approval
     public List<User> getPendingVerifications() {
@@ -75,16 +90,21 @@ public class UserDAO {
         return null;
     }
 
-    // 4. Register a new user - UPDATED with Photo Upload URLs
+    // 4. Register a new user - UPDATED with BCrypt Password Hashing & Photo Upload
+    // URLs
     public boolean registerUser(String name, String email, String password, String role, String collegeIdUrl,
             String selfieUrl) {
         String sql = "INSERT INTO Users (name, email, password, role, is_verified, college_id_url, verification_photo_url) VALUES (?, ?, ?, ?, FALSE, ?, ?)";
         try (Connection conn = DatabaseConnection.getConnection();
-                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                PreparedStatement pstmt = conn.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS)) {
+
+            String hashedPassword = (password != null && !password.isEmpty())
+                    ? BCrypt.hashpw(password, BCrypt.gensalt())
+                    : password;
 
             pstmt.setString(1, name);
             pstmt.setString(2, email);
-            pstmt.setString(3, password);
+            pstmt.setString(3, hashedPassword);
             pstmt.setString(4, role);
             pstmt.setString(5, collegeIdUrl);
             pstmt.setString(6, selfieUrl);
@@ -251,8 +271,166 @@ public class UserDAO {
                 return rs.getString("name");
             }
         } catch (SQLException e) {
-            System.err.println("Error getting user name: " + e.getMessage());
+            System.err.println("Error fetching user name: " + e.getMessage());
         }
         return "Student";
+    }
+
+    // --- Task 1: User Profile APIs ---
+
+    public java.util.Map<String, Object> getUserProfile(int userId) {
+        String sql = "SELECT user_id, name, email, phone_number, role, is_verified, college_id_url FROM Users WHERE user_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, userId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                java.util.Map<String, Object> profile = new java.util.HashMap<>();
+                profile.put("user_id", rs.getInt("user_id"));
+                profile.put("name", rs.getString("name"));
+                profile.put("email", rs.getString("email"));
+                profile.put("phone", rs.getString("phone_number"));
+                profile.put("role", rs.getString("role"));
+                profile.put("is_verified", rs.getBoolean("is_verified"));
+                profile.put("college_id_url", rs.getString("college_id_url"));
+                return profile;
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching user profile: " + e.getMessage());
+        }
+        return null;
+    }
+
+    public boolean updateUserProfile(int userId, String name, String phone) {
+        String sql = "UPDATE Users SET name = ?, phone_number = ? WHERE user_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, name);
+            pstmt.setString(2, phone);
+            pstmt.setInt(3, userId);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            System.err.println("Error updating user profile: " + e.getMessage());
+        }
+        return false;
+    }
+
+    public boolean updatePassword(int userId, String currentPassword, String newPassword) {
+        String fetchSql = "SELECT password FROM Users WHERE user_id = ?";
+        String updateSql = "UPDATE Users SET password = ? WHERE user_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection()) {
+
+            // 1. Fetch current hash
+            String currentHash = null;
+            try (PreparedStatement fetchStmt = conn.prepareStatement(fetchSql)) {
+                fetchStmt.setInt(1, userId);
+                ResultSet rs = fetchStmt.executeQuery();
+                if (rs.next()) {
+                    currentHash = rs.getString("password");
+                }
+            }
+
+            if (currentHash == null || !BCrypt.checkpw(currentPassword, currentHash)) {
+                return false; // Password mismatch
+            }
+
+            // 2. Hash new password and update
+            String newHash = BCrypt.hashpw(newPassword, BCrypt.gensalt());
+            try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                updateStmt.setString(1, newHash);
+                updateStmt.setInt(2, userId);
+                return updateStmt.executeUpdate() > 0;
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error updating password: " + e.getMessage());
+        }
+        return false;
+    }
+
+    // --- Task 2: Admin User Management APIs ---
+
+    public List<java.util.Map<String, Object>> getAllUsers() {
+        List<java.util.Map<String, Object>> users = new ArrayList<>();
+        String sql = "SELECT user_id, name, email, phone_number, role, is_verified, is_email_verified FROM Users ORDER BY user_id DESC";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                java.util.Map<String, Object> user = new java.util.HashMap<>();
+                user.put("user_id", rs.getInt("user_id"));
+                user.put("name", rs.getString("name"));
+                user.put("email", rs.getString("email"));
+                user.put("phone", rs.getString("phone_number"));
+                user.put("role", rs.getString("role"));
+                user.put("is_verified", rs.getBoolean("is_verified"));
+                user.put("is_email_verified", rs.getBoolean("is_email_verified"));
+                users.add(user);
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching all users: " + e.getMessage());
+        }
+        return users;
+    }
+
+    public boolean toggleUserVerification(int userId) {
+        String sql = "UPDATE Users SET is_verified = NOT is_verified WHERE user_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, userId);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            System.err.println("Error toggling user verification: " + e.getMessage());
+        }
+        return false;
+    }
+
+    public boolean deleteUserWithCascade(int userId) {
+        Connection conn = null;
+        try {
+            conn = DatabaseConnection.getConnection();
+            conn.setAutoCommit(false); // Start transaction
+
+            // Delete dependencies sequentially
+            String[] queries = {
+                    "DELETE FROM Incident_Reports WHERE reporter_id = ? OR ride_id IN (SELECT ride_id FROM Rides WHERE driver_id = ?)",
+                    "DELETE FROM Bookings WHERE passenger_id = ? OR ride_id IN (SELECT ride_id FROM Rides WHERE driver_id = ?)",
+                    "DELETE FROM Rides WHERE driver_id = ?",
+                    "DELETE FROM Vehicles WHERE user_id = ?",
+                    "DELETE FROM Users WHERE user_id = ?"
+            };
+
+            for (int i = 0; i < queries.length; i++) {
+                try (PreparedStatement pstmt = conn.prepareStatement(queries[i])) {
+                    pstmt.setInt(1, userId);
+                    if (i < 2) { // Incident_Reports and Bookings have two placeholders
+                        pstmt.setInt(2, userId);
+                    }
+                    pstmt.executeUpdate();
+                }
+            }
+
+            conn.commit();
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Transaction Error deleting user: " + e.getMessage());
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException ex) {
+                    System.err.println("Rollback failed: " + ex.getMessage());
+                }
+            }
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true);
+                    conn.close();
+                } catch (SQLException ex) {
+                    System.err.println("Failed to close connection: " + ex.getMessage());
+                }
+            }
+        }
+        return false;
     }
 }

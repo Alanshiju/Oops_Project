@@ -3,8 +3,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 const AdminDashboard = () => {
-  const [activeTab, setActiveTab] = useState("verification");
+  const [activeTab, setActiveTab] = useState("verification"); // 'verification', 'audit', 'users'
   const [pendingUsers, setPendingUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [statusMessage, setStatusMessage] = useState(
     "Loading pending verifications...",
   );
@@ -13,14 +14,106 @@ const AdminDashboard = () => {
   const [auditFilter, setAuditFilter] = useState("ALL");
   const [incidentModal, setIncidentModal] = useState(null);
 
+  const [socialLinks, setSocialLinks] = useState({
+    whatsapp: "",
+    facebook: "",
+    instagram: "",
+  });
+  const [isUpdatingSocial, setIsUpdatingSocial] = useState(false);
+
+  useEffect(() => {
+    fetch("http://localhost:7070/api/settings/social")
+      .then((res) => res.json())
+      .then((data) => setSocialLinks(data))
+      .catch((err) => console.error("Error fetching social links", err));
+  }, []);
+
+  const handleUpdateSocialLinks = (e) => {
+    e.preventDefault();
+    setIsUpdatingSocial(true);
+    fetch("http://localhost:7070/api/admin/settings/social", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(socialLinks),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setIsUpdatingSocial(false);
+        if (data.message) {
+          toast.success(data.message);
+        } else {
+          toast.error(data.error || "Failed to update social links");
+        }
+      })
+      .catch((err) => {
+        setIsUpdatingSocial(false);
+        toast.error("Error contacting server: " + err.message);
+      });
+  };
+
+  const [campusDestination, setCampusDestination] = useState(null);
+  const [isUpdatingDest, setIsUpdatingDest] = useState(false);
+
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
 
   useEffect(() => {
+    fetchDestination();
+  }, []);
+
+  const fetchDestination = () => {
+    fetch("http://localhost:7070/api/settings/destination")
+      .then((res) => res.json())
+      .then((data) => setCampusDestination(data))
+      .catch((err) => console.error("Error fetching destination", err));
+  };
+
+  const handleSetCampusDestination = () => {
+    if (!("geolocation" in navigator)) {
+      alert("Geolocation is not supported by your browser.");
+      return;
+    }
+    setIsUpdatingDest(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        fetch("http://localhost:7070/api/admin/settings/destination", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(coords),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            setIsUpdatingDest(false);
+            if (data.message) {
+              alert("✅ " + data.message);
+              setCampusDestination(coords);
+            } else {
+              alert("❌ " + (data.error || "Failed to update destination"));
+            }
+          })
+          .catch((err) => {
+            setIsUpdatingDest(false);
+            alert("Error contacting server: " + err.message);
+          });
+      },
+      (err) => {
+        setIsUpdatingDest(false);
+        alert("Failed to acquire GPS location: " + err.message);
+      },
+      { enableHighAccuracy: true },
+    );
+  };
+
+  useEffect(() => {
     if (activeTab === "verification") {
       fetchPendingUsers();
-    } else {
+    } else if (activeTab === "audit") {
       fetchAuditLogs();
+    } else if (activeTab === "users") {
+      fetchAllUsers();
     }
   }, [activeTab]);
 
@@ -89,7 +182,53 @@ const AdminDashboard = () => {
     })
       .then((res) => res.json())
       .then((data) => setAuditLogs(data))
-      .catch((err) => console.error("Error fetching logs", err));
+      .catch((err) => console.error("Error fetching audit logs", err));
+  };
+
+  const fetchAllUsers = () => {
+    fetch("http://localhost:7070/api/admin/users", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.error) setAllUsers(data);
+      });
+  };
+
+  const handleToggleVerification = (userId) => {
+    fetch(`http://localhost:7070/api/admin/users/${userId}/status`, {
+      method: "PUT",
+      credentials: "include",
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.message) {
+          fetchAllUsers();
+        } else {
+          alert("Error: " + data.error);
+        }
+      });
+  };
+
+  const handleDeleteUser = (userId) => {
+    if (
+      !window.confirm(
+        "⚠️ DANGER: Are you sure you want to completely delete this user and all their associated rides, bookings, and incident reports? This action cannot be undone.",
+      )
+    )
+      return;
+
+    fetch(`http://localhost:7070/api/admin/users/${userId}`, {
+      method: "DELETE",
+      credentials: "include",
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.message) {
+          alert("✅ " + data.message);
+          fetchAllUsers();
+        } else {
+          alert("❌ " + data.error);
+        }
+      });
   };
 
   const handleApprove = (userId) => {
@@ -136,6 +275,39 @@ const AdminDashboard = () => {
             className={`px-6 py-2 rounded font-bold transition-all ${activeTab === "audit" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
           >
             Audit & Safety Logs
+          </button>
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-6 py-2 rounded font-bold transition-all ${activeTab === "users" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+          >
+            User Management
+          </button>
+        </div>
+
+        {/* Task 4: Dynamic Admin CMS Destination */}
+        <div className="mt-6 pt-6 border-t border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-bold text-white flex items-center gap-2">
+              <span>📍 Campus Drop-Off Destination:</span>
+              <span className="font-mono text-xs bg-slate-800 text-blue-400 px-2 py-1 rounded border border-slate-700">
+                {campusDestination
+                  ? `${campusDestination.lat.toFixed(4)}, ${campusDestination.lng.toFixed(4)}`
+                  : "Loading..."}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              All driver routes automatically lock their final drop-off point to
+              this coordinate.
+            </p>
+          </div>
+          <button
+            onClick={handleSetCampusDestination}
+            disabled={isUpdatingDest}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 text-white font-bold py-2.5 px-5 rounded-lg shadow text-sm transition-all active:scale-95 flex items-center gap-2"
+          >
+            {isUpdatingDest
+              ? "Acquiring GPS..."
+              : "📍 Set Destination to Current GPS"}
           </button>
         </div>
       </div>
@@ -283,6 +455,105 @@ const AdminDashboard = () => {
             {filteredLogs.length === 0 && (
               <div className="text-center py-10 text-slate-500">
                 No logs found for this filter.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- TASK 2: USER MANAGEMENT TAB --- */}
+      {activeTab === "users" && (
+        <div className="w-full bg-white p-6 rounded-2xl shadow-lg border border-slate-200">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-2xl font-extrabold text-blue-900">
+              User Management
+            </h3>
+            <span className="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-full text-sm">
+              Total: {allUsers.length}
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600 text-sm border-b-2">
+                  <th className="p-3">ID / Name</th>
+                  <th className="p-3">Contact</th>
+                  <th className="p-3">Role</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allUsers.map((user) => (
+                  <tr
+                    key={user.user_id}
+                    className="border-b text-sm hover:bg-slate-50"
+                  >
+                    <td className="p-3">
+                      <div className="font-bold text-slate-800">
+                        {user.name}
+                      </div>
+                      <div className="text-xs font-mono text-slate-400">
+                        ID: {user.user_id}
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-semibold text-blue-700">
+                        {user.email}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {user.phone || "No phone"}
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-bold ${
+                          user.role === "ADMIN"
+                            ? "bg-purple-100 text-purple-800"
+                            : user.role === "DRIVER"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-bold ${
+                          user.is_verified
+                            ? "bg-green-100 text-green-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {user.is_verified ? "Verified" : "Unverified"}
+                      </span>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleToggleVerification(user.user_id)}
+                          className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold px-3 py-1.5 rounded text-xs transition"
+                        >
+                          {user.is_verified ? "Revoke" : "Verify"}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(user.user_id)}
+                          className="bg-red-100 hover:bg-red-600 hover:text-white text-red-700 font-bold px-3 py-1.5 rounded text-xs transition"
+                          title="Delete user permanently"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {allUsers.length === 0 && (
+              <div className="text-center py-10 text-slate-500">
+                Loading users...
               </div>
             )}
           </div>
