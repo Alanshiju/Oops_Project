@@ -24,6 +24,11 @@ const AdminDashboard = () => {
   const [auditFilter, setAuditFilter] = useState("ALL");
   const [incidentModal, setIncidentModal] = useState(null);
 
+  const [auditPage, setAuditPage] = useState(1);
+  const [userPage, setUserPage] = useState(1);
+  const [pendingPage, setPendingPage] = useState(1);
+  const itemsPerPage = 10;
+
   const [socialLinks, setSocialLinks] = useState({
     whatsapp: "",
     facebook: "",
@@ -293,6 +298,27 @@ const AdminDashboard = () => {
     return log.status === auditFilter;
   });
 
+  const totalAuditPages = Math.ceil(filteredLogs.length / itemsPerPage) || 1;
+  const currentAuditPage = Math.min(auditPage, totalAuditPages);
+  const paginatedLogs = filteredLogs.slice(
+    (currentAuditPage - 1) * itemsPerPage,
+    currentAuditPage * itemsPerPage,
+  );
+
+  const totalUserPages = Math.ceil(allUsers.length / itemsPerPage) || 1;
+  const currentUserPage = Math.min(userPage, totalUserPages);
+  const paginatedUsers = allUsers.slice(
+    (currentUserPage - 1) * itemsPerPage,
+    currentUserPage * itemsPerPage,
+  );
+
+  const totalPendingPages = Math.ceil(pendingUsers.length / itemsPerPage) || 1;
+  const currentPendingPage = Math.min(pendingPage, totalPendingPages);
+  const paginatedPending = pendingUsers.slice(
+    (currentPendingPage - 1) * itemsPerPage,
+    currentPendingPage * itemsPerPage,
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 transition-colors duration-300">
       <div className="max-w-[1400px] mx-auto p-4 lg:p-8 grid grid-cols-1 lg:grid-cols-[280px_1fr] items-start gap-8">
@@ -306,19 +332,28 @@ const AdminDashboard = () => {
 
           <div className="flex flex-col gap-2">
             <button
-              onClick={() => setActiveTab("verification")}
+              onClick={() => {
+                setActiveTab("verification");
+                setPendingPage(1);
+              }}
               className={`px-4 py-3 rounded-full font-bold text-sm text-left transition-all ${activeTab === "verification" ? "bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50"}`}
             >
               User Verification
             </button>
             <button
-              onClick={() => setActiveTab("audit")}
+              onClick={() => {
+                setActiveTab("audit");
+                setAuditPage(1);
+              }}
               className={`px-4 py-3 rounded-full font-bold text-sm text-left transition-all ${activeTab === "audit" ? "bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50"}`}
             >
               Audit & Safety Logs
             </button>
             <button
-              onClick={() => setActiveTab("users")}
+              onClick={() => {
+                setActiveTab("users");
+                setUserPage(1);
+              }}
               className={`px-4 py-3 rounded-full font-bold text-sm text-left transition-all ${activeTab === "users" ? "bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 shadow-sm" : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50"}`}
             >
               User Management
@@ -468,53 +503,83 @@ const AdminDashboard = () => {
                   {statusMessage}
                 </div>
               ) : (
-                <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {pendingUsers.map((user) => (
-                    <div
-                      key={user.userId}
-                      className="bg-white dark:bg-slate-800 p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 dark:shadow-black/40 border border-slate-200 dark:border-slate-700 relative overflow-hidden flex flex-col justify-between"
-                    >
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-800 dark:text-white">
-                          {user.name}
-                        </h3>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-                          {user.email} • {user.role}
-                        </p>
+                <div className="w-full flex flex-col">
+                  <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {paginatedPending.map((user) => (
+                      <div
+                        key={user.userId}
+                        className="bg-white dark:bg-slate-800 p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 dark:shadow-black/40 border border-slate-200 dark:border-slate-700 relative overflow-hidden flex flex-col justify-between"
+                      >
+                        <div>
+                          <h3 className="text-xl font-bold text-slate-800 dark:text-white">
+                            {user.name}
+                          </h3>
+                          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                            {user.email} • {user.role}
+                          </p>
 
-                        <div className="flex gap-4 mb-6">
-                          <div className="flex-1 bg-slate-100 dark:bg-slate-700/60 h-32 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs text-slate-400 dark:text-slate-300 text-center p-2">
-                            {user.collegeIdUrl ? (
-                              <img
-                                src={user.collegeIdUrl}
-                                alt="College ID"
-                                className="max-h-full max-w-full object-contain"
-                              />
-                            ) : (
-                              "No ID"
-                            )}
-                          </div>
-                          <div className="flex-1 bg-slate-100 dark:bg-slate-700/60 h-32 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs text-slate-400 dark:text-slate-300 text-center p-2">
-                            {user.verificationPhotoUrl ? (
-                              <img
-                                src={user.verificationPhotoUrl}
-                                alt="Selfie"
-                                className="max-h-full max-w-full object-contain"
-                              />
-                            ) : (
-                              "No Selfie"
-                            )}
+                          <div className="flex gap-4 mb-6">
+                            <div className="flex-1 bg-slate-100 dark:bg-slate-700/60 h-32 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs text-slate-400 dark:text-slate-300 text-center p-2">
+                              {user.collegeIdUrl ? (
+                                <img
+                                  src={user.collegeIdUrl}
+                                  alt="College ID"
+                                  className="max-h-full max-w-full object-contain"
+                                />
+                              ) : (
+                                "No ID"
+                              )}
+                            </div>
+                            <div className="flex-1 bg-slate-100 dark:bg-slate-700/60 h-32 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs text-slate-400 dark:text-slate-300 text-center p-2">
+                              {user.verificationPhotoUrl ? (
+                                <img
+                                  src={user.verificationPhotoUrl}
+                                  alt="Selfie"
+                                  className="max-h-full max-w-full object-contain"
+                                />
+                              ) : (
+                                "No Selfie"
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <button
+                          onClick={() => handleApprove(user.userId)}
+                          className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow transition-colors active:scale-95"
+                        >
+                          Approve & Verify User
+                        </button>
                       </div>
+                    ))}
+                  </div>
+
+                  {pendingUsers.length > itemsPerPage && (
+                    <div className="flex justify-between items-center mt-4 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
                       <button
-                        onClick={() => handleApprove(user.userId)}
-                        className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow transition-colors active:scale-95"
+                        onClick={() =>
+                          setPendingPage((p) => Math.max(1, p - 1))
+                        }
+                        disabled={currentPendingPage === 1}
+                        className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
                       >
-                        Approve & Verify User
+                        Previous
+                      </button>
+                      <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                        Page {currentPendingPage} of {totalPendingPages}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setPendingPage((p) =>
+                            Math.min(totalPendingPages, p + 1),
+                          )
+                        }
+                        disabled={currentPendingPage >= totalPendingPages}
+                        className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                      >
+                        Next
                       </button>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
@@ -522,7 +587,7 @@ const AdminDashboard = () => {
 
           {activeTab === "audit" && (
             <div className="w-full bg-white dark:bg-slate-800 p-6 rounded-[2rem] border border-slate-200 dark:border-slate-700 shadow-xl shadow-slate-200/50 dark:shadow-black/40">
-              <div className="flex gap-2 mb-6 border-b border-slate-200 dark:border-slate-700 pb-4">
+              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 dark:border-slate-700 pb-4">
                 {[
                   "ALL",
                   "PENDING",
@@ -533,7 +598,10 @@ const AdminDashboard = () => {
                 ].map((f) => (
                   <button
                     key={f}
-                    onClick={() => setAuditFilter(f)}
+                    onClick={() => {
+                      setAuditFilter(f);
+                      setAuditPage(1);
+                    }}
                     className={`px-4 py-1 rounded text-xs font-bold ${auditFilter === f ? "bg-teal-600 text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600"}`}
                   >
                     {f}
@@ -542,68 +610,93 @@ const AdminDashboard = () => {
               </div>
 
               <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-black/40 mt-4">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-700/60 text-slate-600 dark:text-slate-200 text-sm border-b-2 border-slate-200 dark:border-slate-700">
-                      <th className="p-3">Ride ID</th>
-                      <th className="p-3">Driver</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3">Distance</th>
-                      <th className="p-3">Emergency</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredLogs.map((log) => (
-                      <tr
-                        key={log.rideId}
-                        className={`border-b border-slate-100 dark:border-slate-700 text-sm ${log.isEmergency ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 shadow-[inset_0_0_10px_rgba(220,38,38,0.2)]" : "hover:bg-slate-50/50 dark:hover:bg-slate-700/40 transition-colors"}`}
-                      >
-                        <td className="p-3 font-bold text-slate-700 dark:text-slate-200">
-                          #{log.rideId}
-                        </td>
-                        <td className="p-3">
-                          <div className="font-semibold text-slate-800 dark:text-slate-100">
-                            {log.driverName}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            {log.driverEmail}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-bold ${log.status === "COMPLETED" ? "bg-purple-100 text-purple-800" : log.status === "CANCELLED" ? "bg-slate-200 text-slate-700" : "bg-blue-100 text-blue-800"}`}
-                          >
-                            {log.status}
-                          </span>
-                        </td>
-                        <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
-                          {log.distanceKm} km
-                        </td>
-                        <td className="p-3">
-                          {log.isEmergency && log.incident ? (
-                            <button
-                              onClick={() =>
-                                setIncidentModal({
-                                  lat: log.incident.lat,
-                                  lng: log.incident.lng,
-                                  route: log.routeGeometry,
-                                })
-                              }
-                              className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1.5 rounded shadow text-xs animate-pulse"
-                            >
-                              Inspect Incident
-                            </button>
-                          ) : (
-                            <span className="text-slate-400">Clear</span>
-                          )}
-                        </td>
+                <div className="w-full overflow-x-auto pb-2">
+                  <table className="w-full min-w-[600px] text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-700/60 text-slate-600 dark:text-slate-200 text-sm border-b-2 border-slate-200 dark:border-slate-700">
+                        <th className="p-3">Ride ID</th>
+                        <th className="p-3">Driver</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Distance</th>
+                        <th className="p-3">Emergency</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {paginatedLogs.map((log) => (
+                        <tr
+                          key={log.rideId}
+                          className={`border-b border-slate-100 dark:border-slate-700 text-sm ${log.isEmergency ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 shadow-[inset_0_0_10px_rgba(220,38,38,0.2)]" : "hover:bg-slate-50/50 dark:hover:bg-slate-700/40 transition-colors"}`}
+                        >
+                          <td className="p-3 font-bold text-slate-700 dark:text-slate-200">
+                            #{log.rideId}
+                          </td>
+                          <td className="p-3">
+                            <div className="font-semibold text-slate-800 dark:text-slate-100">
+                              {log.driverName}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">
+                              {log.driverEmail}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-bold ${log.status === "COMPLETED" ? "bg-purple-100 text-purple-800" : log.status === "CANCELLED" ? "bg-slate-200 text-slate-700" : "bg-blue-100 text-blue-800"}`}
+                            >
+                              {log.status}
+                            </span>
+                          </td>
+                          <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
+                            {log.distanceKm} km
+                          </td>
+                          <td className="p-3">
+                            {log.isEmergency && log.incident ? (
+                              <button
+                                onClick={() =>
+                                  setIncidentModal({
+                                    lat: log.incident.lat,
+                                    lng: log.incident.lng,
+                                    route: log.routeGeometry,
+                                  })
+                                }
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1.5 rounded shadow text-xs animate-pulse"
+                              >
+                                Inspect Incident
+                              </button>
+                            ) : (
+                              <span className="text-slate-400">Clear</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 {filteredLogs.length === 0 && (
                   <div className="text-center py-10 text-slate-500 dark:text-slate-400">
                     No logs found for this filter.
+                  </div>
+                )}
+                {filteredLogs.length > 0 && (
+                  <div className="flex justify-between items-center mt-4 p-4 bg-slate-50 dark:bg-slate-800 rounded-b-2xl border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                      disabled={currentAuditPage === 1}
+                      className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                      Page {currentAuditPage} of {totalAuditPages}
+                    </span>
+                    <button
+                      onClick={() =>
+                        setAuditPage((p) => Math.min(totalAuditPages, p + 1))
+                      }
+                      disabled={currentAuditPage >= totalAuditPages}
+                      className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
               </div>
@@ -623,88 +716,113 @@ const AdminDashboard = () => {
               </div>
 
               <div className="overflow-hidden rounded-[1.5rem] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-black/40 mt-4">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-700/60 text-slate-600 dark:text-slate-200 text-sm border-b-2 border-slate-200 dark:border-slate-700">
-                      <th className="p-3">ID / Name</th>
-                      <th className="p-3">Contact</th>
-                      <th className="p-3">Role</th>
-                      <th className="p-3">Status</th>
-                      <th className="p-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allUsers.map((user) => (
-                      <tr
-                        key={user.user_id}
-                        className="border-b border-slate-100 dark:border-slate-700 text-sm hover:bg-slate-50/50 dark:hover:bg-slate-700/40 transition-colors"
-                      >
-                        <td className="p-3">
-                          <div className="font-bold text-slate-800 dark:text-white">
-                            {user.name}
-                          </div>
-                          <div className="text-xs font-mono text-slate-400">
-                            ID: {user.user_id}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <div className="font-semibold text-blue-700 dark:text-blue-400">
-                            {user.email}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            {user.phone || "No phone"}
-                          </div>
-                        </td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-bold ${
-                              user.role === "ADMIN"
-                                ? "bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300"
-                                : user.role === "DRIVER"
-                                  ? "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300"
-                                  : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
-                            }`}
-                          >
-                            {user.role}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-bold ${
-                              user.is_verified
-                                ? "bg-green-100 dark:bg-green-950/60 text-green-800 dark:text-green-300"
-                                : "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300"
-                            }`}
-                          >
-                            {user.is_verified ? "Verified" : "Unverified"}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() =>
-                                handleToggleVerification(user.user_id)
-                              }
-                              className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold px-3 py-1.5 rounded text-xs transition"
-                            >
-                              {user.is_verified ? "Revoke" : "Verify"}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteUser(user.user_id)}
-                              className="bg-red-100 dark:bg-red-950/60 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 font-bold px-3 py-1.5 rounded text-xs transition"
-                              title="Delete user permanently"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
+                <div className="w-full overflow-x-auto pb-2">
+                  <table className="w-full min-w-[600px] text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-700/60 text-slate-600 dark:text-slate-200 text-sm border-b-2 border-slate-200 dark:border-slate-700">
+                        <th className="p-3">ID / Name</th>
+                        <th className="p-3">Contact</th>
+                        <th className="p-3">Role</th>
+                        <th className="p-3">Status</th>
+                        <th className="p-3">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {paginatedUsers.map((user) => (
+                        <tr
+                          key={user.user_id}
+                          className="border-b border-slate-100 dark:border-slate-700 text-sm hover:bg-slate-50/50 dark:hover:bg-slate-700/40 transition-colors"
+                        >
+                          <td className="p-3">
+                            <div className="font-bold text-slate-800 dark:text-white">
+                              {user.name}
+                            </div>
+                            <div className="text-xs font-mono text-slate-400">
+                              ID: {user.user_id}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-semibold text-blue-700 dark:text-blue-400">
+                              {user.email}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">
+                              {user.phone || "No phone"}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-bold ${
+                                user.role === "ADMIN"
+                                  ? "bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300"
+                                  : user.role === "DRIVER"
+                                    ? "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300"
+                                    : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-bold ${
+                                user.is_verified
+                                  ? "bg-green-100 dark:bg-green-950/60 text-green-800 dark:text-green-300"
+                                  : "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300"
+                              }`}
+                            >
+                              {user.is_verified ? "Verified" : "Unverified"}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() =>
+                                  handleToggleVerification(user.user_id)
+                                }
+                                className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-bold px-3 py-1.5 rounded text-xs transition"
+                              >
+                                {user.is_verified ? "Revoke" : "Verify"}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(user.user_id)}
+                                className="bg-red-100 dark:bg-red-950/60 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 font-bold px-3 py-1.5 rounded text-xs transition"
+                                title="Delete user permanently"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 {allUsers.length === 0 && (
                   <div className="text-center py-10 text-slate-500 dark:text-slate-400">
                     Loading users...
+                  </div>
+                )}
+                {allUsers.length > 0 && (
+                  <div className="flex justify-between items-center mt-4 p-4 bg-slate-50 dark:bg-slate-800 rounded-b-2xl border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={() => setUserPage((p) => Math.max(1, p - 1))}
+                      disabled={currentUserPage === 1}
+                      className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                      Page {currentUserPage} of {totalUserPages}
+                    </span>
+                    <button
+                      onClick={() =>
+                        setUserPage((p) => Math.min(totalUserPages, p + 1))
+                      }
+                      disabled={currentUserPage >= totalUserPages}
+                      className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
               </div>

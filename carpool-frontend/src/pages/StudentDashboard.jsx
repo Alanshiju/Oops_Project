@@ -157,7 +157,23 @@ const StudentDashboard = () => {
   const hasInitialZoom = useRef(false);
 
   const [rides, setRides] = useState([]);
+  const [ridePage, setRidePage] = useState(1);
+  const ridesPerPage = 3;
+
+  const availableRides = rides;
+  const totalRidePages = Math.ceil(availableRides.length / ridesPerPage) || 1;
+  const currentRidePage = Math.min(ridePage, totalRidePages);
+  const paginatedRides = availableRides.slice(
+    (currentRidePage - 1) * ridesPerPage,
+    currentRidePage * ridesPerPage,
+  );
+
   const [myBookings, setMyBookings] = useState([]);
+  const activeBooking = myBookings.find((b) =>
+    ["PENDING", "ACCEPTED", "DRIVER_ARRIVED", "IN_TRANSIT"].includes(
+      b.status?.toUpperCase(),
+    ),
+  );
   const [isSearching, setIsSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState(
     "Click to find drivers passing by your location.",
@@ -309,8 +325,8 @@ const StudentDashboard = () => {
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 19,
           attribution: "© OpenStreetMap contributors",
-          attribution: "© OpenStreetMap contributors",
         }).addTo(mapInstance.current);
+        setTimeout(() => mapInstance.current?.invalidateSize(), 150);
       }
 
       // Continuous passenger tracking
@@ -595,6 +611,7 @@ const StudentDashboard = () => {
             .then((data) => {
               setIsSearching(false);
               setRides(data);
+              setRidePage(1);
               if (data.length === 0) {
                 setSearchStatus(
                   "No rides are passing through your immediate area right now.",
@@ -733,10 +750,16 @@ const StudentDashboard = () => {
 
   return (
     <>
-      <div className="max-w-[1400px] mx-auto p-4 lg:p-8 grid grid-cols-1 lg:grid-cols-2 items-start gap-8">
-        {/* Left Column */}
-        <div className="flex flex-col gap-6 lg:sticky lg:top-24">
-          <div className="flex gap-4 mb-6 w-full">
+      <div
+        className={`mx-auto p-4 lg:p-8 flex flex-col gap-6 w-full items-start ${
+          activeBooking
+            ? "max-w-[1400px] lg:grid lg:grid-cols-[1fr_1fr]"
+            : "max-w-4xl"
+        }`}
+      >
+        {/* Item 1: Tabs & Active Ride (order-1 on mobile) */}
+        <div className="w-full flex flex-col gap-6 order-1 lg:order-1 lg:col-start-1 lg:row-start-1">
+          <div className="flex gap-4 w-full">
             <button
               onClick={() => setActiveTab("search")}
               className={`flex-1 py-3 font-bold rounded-lg transition-colors shadow ${activeTab === "search" ? "bg-teal-600 hover:bg-teal-700 text-white" : "bg-white dark:bg-slate-800 text-teal-900 dark:text-teal-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700"}`}
@@ -751,76 +774,89 @@ const StudentDashboard = () => {
             </button>
           </div>
 
-          <div
-            style={{
-              display: activeTab === "search" ? "block" : "none",
-              width: "100%",
-            }}
-          >
-            {/* Pinned Active Booking Card + Live Tracking */}
-            {(() => {
-              const activeBooking = myBookings.find((b) =>
-                [
-                  "PENDING",
-                  "ACCEPTED",
-                  "DRIVER_ARRIVED",
-                  "IN_TRANSIT",
-                ].includes(b.status),
-              );
-              if (!activeBooking) return null;
-              return (
-                <div className="w-full mb-6">
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4 }}
-                    className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-l-8 border-teal-600 rounded-[2rem] shadow-xl shadow-teal-700/10 p-5 flex justify-between items-center border border-white/40 dark:border-slate-700"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-lg font-bold text-slate-800 dark:text-white">
-                          Active: {activeBooking.driverName}
-                        </h3>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-bold tracking-wide ${
-                            activeBooking.status === "IN_TRANSIT"
-                              ? "bg-blue-100 text-blue-800"
-                              : activeBooking.status === "DRIVER_ARRIVED"
-                                ? "bg-amber-100 text-amber-800"
-                                : activeBooking.status === "ACCEPTED"
-                                  ? "bg-green-100 text-green-800"
-                                  : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
-                          }`}
-                        >
-                          {activeBooking.status === "IN_TRANSIT"
-                            ? "🚗 "
+          {/* Pinned Active Booking Card */}
+          {activeBooking && (
+            <div className="w-full">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border-l-8 border-teal-600 rounded-[2rem] shadow-xl shadow-teal-700/10 p-5 border border-white/40 dark:border-slate-700"
+              >
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="text-lg font-bold text-slate-800 dark:text-white">
+                        Active: {activeBooking.driverName}
+                      </h3>
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold tracking-wide ${
+                          activeBooking.status === "IN_TRANSIT"
+                            ? "bg-blue-100 text-blue-800"
                             : activeBooking.status === "DRIVER_ARRIVED"
-                              ? "📍 "
+                              ? "bg-amber-100 text-amber-800"
                               : activeBooking.status === "ACCEPTED"
-                                ? "✅ "
-                                : "⏳ "}
-                          {activeBooking.status}
-                        </span>
-                      </div>
-                      <p className="text-sm text-slate-500 dark:text-slate-400">
-                        Ride #{activeBooking.rideId} &bull;{" "}
-                        {activeBooking.vehicleColor || ""}{" "}
-                        {activeBooking.vehicleMake || ""}{" "}
-                        {activeBooking.vehicleModel || ""} &bull;{" "}
-                        {activeBooking.licensePlate || "N/A"}
-                      </p>
+                                ? "bg-green-100 text-green-800"
+                                : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                        }`}
+                      >
+                        {activeBooking.status === "IN_TRANSIT"
+                          ? "🚗 "
+                          : activeBooking.status === "DRIVER_ARRIVED"
+                            ? "📍 "
+                            : activeBooking.status === "ACCEPTED"
+                              ? "✅ "
+                              : "⏳ "}
+                        {activeBooking.status}
+                      </span>
                     </div>
-                    <button
-                      onClick={handleCancelBooking}
-                      className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-5 rounded-lg shadow text-sm transition active:scale-95"
-                    >
-                      Cancel Booking
-                    </button>
-                  </motion.div>
+                    <span className="text-xs font-bold text-teal-600 dark:text-teal-400">
+                      Ride #{activeBooking.rideId}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleCancelBooking}
+                    className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-5 rounded-lg shadow text-sm transition active:scale-95"
+                  >
+                    Cancel Booking
+                  </button>
                 </div>
-              );
-            })()}
 
+                <details className="mt-3 group cursor-pointer">
+                  <summary className="text-xs font-bold text-slate-500 dark:text-slate-400 select-none">
+                    View Vehicle Details ▾
+                  </summary>
+                  <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                      🚗 {activeBooking.vehicleColor || ""}{" "}
+                      {activeBooking.vehicleMake || "Vehicle"}{" "}
+                      {activeBooking.vehicleModel || ""} (
+                      {activeBooking.licensePlate || "N/A"})
+                    </span>
+                    {activeBooking.driverPhone && (
+                      <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                        📞 {activeBooking.driverPhone}
+                      </span>
+                    )}
+                    {activeBooking.driverEmail && (
+                      <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                        ✉️ {activeBooking.driverEmail}
+                      </span>
+                    )}
+                  </div>
+                </details>
+              </motion.div>
+            </div>
+          )}
+        </div>
+
+        {/* Item 3: Find a Ride to Campus & History (order-3 on mobile) */}
+        <div className="w-full flex flex-col gap-6 order-3 lg:order-1 lg:col-start-1 lg:row-start-2">
+          {/* Find a Ride Tab */}
+          <div
+            style={{ display: activeTab === "search" ? "flex" : "none" }}
+            className="w-full flex-col gap-6"
+          >
             {/* Scan My Area Hero Card */}
             <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-lg w-full border border-slate-200 dark:border-slate-700 text-center mb-8">
               <h2 className="text-3xl font-extrabold text-teal-900 dark:text-teal-400 mb-4">
@@ -878,93 +914,87 @@ const StudentDashboard = () => {
                   ))}
                 </div>
               ) : (
-                rides.map((ride) => {
-                  const hasActiveBooking = myBookings.some((b) =>
-                    [
-                      "PENDING",
-                      "ACCEPTED",
-                      "DRIVER_ARRIVED",
-                      "IN_TRANSIT",
-                    ].includes(b.status),
-                  );
+                paginatedRides.map((ride) => {
+                  const hasActiveBooking = Boolean(activeBooking);
                   return (
                     <div
                       key={ride.rideId}
                       className="bg-white dark:bg-slate-800 rounded-xl shadow-md border border-slate-200 dark:border-slate-700 overflow-hidden"
                     >
-                      <div className="p-6 hover:shadow-lg transition-shadow flex justify-between items-center">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300 rounded-full flex items-center justify-center font-bold text-xl uppercase shadow-inner">
-                            {ride.driverName ? ride.driverName.charAt(0) : "D"}
-                          </div>
-                          <div>
-                            <h3 className="text-xl font-bold text-slate-800 dark:text-white">
-                              {ride.driverName || "Driver"}
-                            </h3>
-                            <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2">
-                              <span>
-                                {ride.carColor || ""}{" "}
-                                {ride.vehicleMake || "Unknown"}{" "}
-                                {ride.vehicleModel || "Vehicle"}
-                              </span>
-                              <span className="text-slate-300 dark:text-slate-600">
-                                |
-                              </span>
-                              <span className="font-bold text-slate-700 dark:text-slate-200 tracking-wider bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded">
-                                {ride.licensePlate || "N/A"}
-                              </span>
-                            </p>
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className="bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs px-2 py-1 rounded-full font-bold">
-                                {ride.availableSeats} Seats Left
-                              </span>
-                              <span className="bg-teal-100 dark:bg-teal-900/50 text-teal-800 dark:text-teal-200 text-xs px-2 py-1 rounded-full font-bold">
-                                {ride.distanceKm} km
-                              </span>
-                              {ride.isFreeRide || ride.costPerSeat === 0 ? (
-                                <span className="bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 text-xs px-2 py-1 rounded-full font-bold">
-                                  🌱 Free Ride
-                                </span>
-                              ) : (
-                                <span className="bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-xs px-2 py-1 rounded-full font-bold">
-                                  ₹{ride.costPerSeat}/seat
-                                </span>
-                              )}
+                      <div className="p-5 hover:shadow-lg transition-shadow">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300 rounded-full flex items-center justify-center font-bold text-lg uppercase shadow-inner">
+                              {ride.driverName
+                                ? ride.driverName.charAt(0)
+                                : "D"}
                             </div>
+                            <div>
+                              <h4 className="font-bold text-lg text-slate-800 dark:text-white">
+                                {ride.driverName || "Driver"}
+                              </h4>
+                              <span className="text-xs font-bold text-teal-600 dark:text-teal-400">
+                                Fare:{" "}
+                                {ride.isFreeRide || ride.costPerSeat === 0
+                                  ? "🌱 Free Ride"
+                                  : `₹${ride.costPerSeat}/seat`}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col items-end gap-2">
+                            {hasActiveBooking ? (
+                              <div
+                                className="bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-bold py-2 px-5 rounded-lg text-sm cursor-not-allowed"
+                                title="Cancel active booking to book another ride"
+                              >
+                                Booking Active
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleBookSeat(ride.rideId)}
+                                className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-5 rounded-lg shadow-md transition-all active:scale-95 text-sm"
+                              >
+                                Book Seat
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                setExpandedRouteRideId(
+                                  expandedRouteRideId === ride.rideId
+                                    ? null
+                                    : ride.rideId,
+                                )
+                              }
+                              className="text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 text-xs font-bold underline"
+                            >
+                              {expandedRouteRideId === ride.rideId
+                                ? "Hide Route"
+                                : "View Route"}
+                            </button>
                           </div>
                         </div>
 
-                        <div className="flex flex-col items-end gap-2">
-                          {hasActiveBooking ? (
-                            <div
-                              className="bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 font-bold py-3 px-6 rounded-lg text-sm cursor-not-allowed"
-                              title="Cancel active booking to book another ride"
-                            >
-                              Booking Active
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => handleBookSeat(ride.rideId)}
-                              className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-all active:scale-95"
-                            >
-                              Book Seat
-                            </button>
-                          )}
-                          <button
-                            onClick={() =>
-                              setExpandedRouteRideId(
-                                expandedRouteRideId === ride.rideId
-                                  ? null
-                                  : ride.rideId,
-                              )
-                            }
-                            className="text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 text-xs font-bold underline"
-                          >
-                            {expandedRouteRideId === ride.rideId
-                              ? "Hide Route"
-                              : "View Route"}
-                          </button>
-                        </div>
+                        <details className="mt-3 group cursor-pointer">
+                          <summary className="text-xs font-bold text-slate-500 dark:text-slate-400 select-none">
+                            View Ride Details ▾
+                          </summary>
+                          <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-300">
+                            <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                              🚗 {ride.carColor || ""}{" "}
+                              {ride.vehicleMake || "Vehicle"}{" "}
+                              {ride.vehicleModel || ""} (
+                              {ride.licensePlate || "N/A"})
+                            </span>
+                            <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                              💺 {ride.availableSeats ?? ride.seats ?? 1} Seats
+                              Left
+                            </span>
+                            <span className="bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
+                              📍 {ride.distanceKm || 0} km
+                            </span>
+                          </div>
+                        </details>
                       </div>
                       {expandedRouteRideId === ride.rideId && (
                         <div className="border-t border-slate-100 dark:border-slate-700 px-6 pb-5">
@@ -974,6 +1004,30 @@ const StudentDashboard = () => {
                     </div>
                   );
                 })
+              )}
+
+              {!isSearching && availableRides.length > ridesPerPage && (
+                <div className="flex justify-between items-center mt-4 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+                  <button
+                    onClick={() => setRidePage((p) => Math.max(1, p - 1))}
+                    disabled={currentRidePage === 1}
+                    className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                    Page {currentRidePage} of {totalRidePages}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setRidePage((p) => Math.min(totalRidePages, p + 1))
+                    }
+                    disabled={currentRidePage >= totalRidePages}
+                    className="px-4 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm rounded-xl border border-slate-200 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-600 transition"
+                  >
+                    Next
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1107,12 +1161,12 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* Right Column: Map */}
-        <div className="w-full h-[50vh] lg:h-[750px] rounded-[2rem] overflow-hidden shadow-2xl shadow-slate-200/50 dark:shadow-slate-950/50 border border-slate-200 dark:border-slate-700 z-0 relative bg-slate-100 dark:bg-slate-900 flex flex-col">
-          {activeRideId ? (
-            <div className="bg-white dark:bg-slate-800 p-5 rounded-xl shadow-md border border-slate-200 dark:border-slate-700 mt-3">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="text-md font-bold text-teal-900 dark:text-teal-300">
+        {/* Item 2: Map Container (rendered only when active booking exists) */}
+        {activeBooking && (
+          <div className="w-full order-2 lg:order-2 lg:col-start-2 lg:row-start-1 lg:row-span-2 lg:sticky lg:top-24">
+            <div className="bg-white dark:bg-slate-800 p-0 lg:p-6 rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-950/50 border border-slate-200 dark:border-slate-700 overflow-hidden w-full flex flex-col">
+              <div className="flex justify-between items-center p-3 lg:p-0 mb-0 lg:mb-3">
+                <h3 className="hidden lg:block text-md font-bold text-teal-900 dark:text-teal-300">
                   Live Tracking
                 </h3>
                 <div className="flex items-center gap-2">
@@ -1134,7 +1188,7 @@ const StudentDashboard = () => {
                   )}
                 </div>
               </div>
-              <div className="relative w-full">
+              <div className="w-full h-[400px] lg:h-[500px] relative z-0">
                 <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
                   <button
                     type="button"
@@ -1153,32 +1207,12 @@ const StudentDashboard = () => {
                 </div>
                 <div
                   ref={mapRef}
-                  className="w-full h-[45vh] lg:h-[650px] rounded-[2rem] overflow-hidden shadow-2xl shadow-teal-700/20 z-0"
+                  className="absolute inset-0 w-full h-full z-0"
                 ></div>
               </div>
             </div>
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 p-8 text-center bg-slate-50 dark:bg-slate-900/50">
-              <svg
-                className="w-16 h-16 mb-4 text-slate-300 dark:text-slate-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
-                ></path>
-              </svg>
-              <p className="font-bold text-lg text-slate-500 dark:text-slate-400 mb-1">
-                Map Area
-              </p>
-              <p className="text-sm">Book a ride to see live tracking.</p>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Floating Chat Widget */}
