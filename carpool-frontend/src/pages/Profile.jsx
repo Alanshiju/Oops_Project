@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import toast from "react-hot-toast";
+import { API_BASE_URL } from "../config/api";
 
 const Profile = () => {
   const [profile, setProfile] = useState(null);
@@ -24,7 +24,7 @@ const Profile = () => {
   }, []);
 
   const fetchProfile = () => {
-    fetch("http://localhost:7070/api/user/profile", { credentials: "include" })
+    fetch(`${API_BASE_URL}/api/user/profile`, { credentials: "include" })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load profile");
         return res.json();
@@ -45,7 +45,7 @@ const Profile = () => {
     e.preventDefault();
     setIsSavingProfile(true);
 
-    fetch("http://localhost:7070/api/user/profile", {
+    fetch(`${API_BASE_URL}/api/user/profile`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -77,7 +77,7 @@ const Profile = () => {
 
     setIsChangingPassword(true);
 
-    fetch("http://localhost:7070/api/user/change-password", {
+    fetch(`${API_BASE_URL}/api/user/change-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -142,7 +142,7 @@ const Profile = () => {
                 College ID Document
               </p>
               <img
-                src={`http://localhost:7070${profile.college_id_url}`}
+                src={`${API_BASE_URL}${profile.college_id_url}`}
                 alt="College ID"
                 className="h-32 rounded border shadow-sm object-cover"
               />

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -203,14 +204,14 @@ public class RideDAO {
     public List<Ride> getAllActiveRides() {
         List<Ride> activeRides = new ArrayList<>();
         // Only fetch rides that actually have seats and a valid route saved
-        String sql = "SELECT r.ride_id, r.driver_id, r.available_seats, r.route_geometry, " +
+        String sql = "SELECT r.ride_id, r.driver_id, r.total_seats, r.available_seats, r.route_geometry, " +
                 "r.status, r.distance_km, r.cost_per_seat, r.is_free_ride, " +
                 "u.name AS driver_name, v.make, v.model, v.license_plate, v.color " +
                 "FROM Rides r " +
                 "JOIN Users u ON r.driver_id = u.user_id " +
                 "LEFT JOIN Vehicles v ON u.user_id = v.user_id " +
                 "WHERE r.available_seats > 0 AND r.route_geometry IS NOT NULL " +
-                "AND (r.status = 'PENDING' OR r.status IS NULL)";
+                "AND (r.status IN ('PENDING', 'IN_TRANSIT') OR r.status IS NULL)";
 
         try (Connection conn = DatabaseConnection.getConnection();
                 PreparedStatement pstmt = conn.prepareStatement(sql);
@@ -222,6 +223,7 @@ public class RideDAO {
                 Ride ride = new Ride();
                 ride.setRideId(rs.getInt("ride_id"));
                 ride.setDriverId(rs.getInt("driver_id"));
+                ride.setTotalSeats(rs.getInt("total_seats"));
                 ride.setAvailableSeats(rs.getInt("available_seats"));
 
                 ride.setDriverName(rs.getString("driver_name"));
@@ -810,8 +812,35 @@ public class RideDAO {
         }
     }
 
-    // Constraint 3: Transactional Ride Reaper Cascade
+    // Constraint 3: Transactional Ride Reaper Cascade & 24-Hour Auto-Cancel
     public int reapOrphanedRides() {
+        // 1. Task 3: 24-Hour Auto-Cancel: automatically cancel any ride older than 24
+        // hours that hasn't been completed
+        String autoCancel24hSql = "UPDATE Rides SET status = 'CANCELLED' " +
+                "WHERE status NOT IN ('COMPLETED', 'CANCELLED') " +
+                "AND (" +
+                "  (created_at IS NOT NULL AND created_at < (NOW() - INTERVAL 24 HOUR)) " +
+                "  OR (departure_time IS NOT NULL AND departure_time < (NOW() - INTERVAL 24 HOUR))" +
+                ")";
+        String cancelBookings24hSql = "UPDATE Bookings b JOIN Rides r ON b.ride_id = r.ride_id " +
+                "SET b.booking_status = 'CANCELLED' " +
+                "WHERE r.status = 'CANCELLED' AND b.booking_status NOT IN ('COMPLETED', 'CANCELLED')";
+
+        try (Connection conn = DatabaseConnection.getConnection()) {
+            try (PreparedStatement stmt24 = conn.prepareStatement(autoCancel24hSql)) {
+                int cancelled24 = stmt24.executeUpdate();
+                if (cancelled24 > 0) {
+                    System.out
+                            .println("24-Hour Auto-Cancel: Cancelled " + cancelled24 + " ride(s) older than 24 hours.");
+                    try (PreparedStatement bStmt = conn.prepareStatement(cancelBookings24hSql)) {
+                        bStmt.executeUpdate();
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error running 24-hour auto-cancel: " + e.getMessage());
+        }
+
         String selectOrphanedSql = "SELECT ride_id FROM Rides " +
                 "WHERE (status = 'PENDING' OR status = 'IN_TRANSIT') " +
                 "AND departure_time IS NOT NULL " +
@@ -925,5 +954,70 @@ public class RideDAO {
             System.err.println("Error getting system setting " + key + ": " + e.getMessage());
         }
         return null;
+    }
+
+    // Task 3: Gather Full Ride Details for SOS
+    public Map<String, Object> getFullRideDetailsForSos(int rideId) {
+        Map<String, Object> details = new HashMap<>();
+        Map<String, Object> driverMap = new HashMap<>();
+        Map<String, Object> vehicleMap = new HashMap<>();
+        List<Map<String, Object>> passengersList = new ArrayList<>();
+
+        details.put("rideId", rideId);
+        details.put("driver", driverMap);
+        details.put("vehicle", vehicleMap);
+        details.put("passengers", passengersList);
+
+        // 1. Fetch Driver and Vehicle Details
+        String driverSql = "SELECT r.driver_id, u.name AS driver_name, u.phone_number AS driver_phone, u.email AS driver_email, "
+                +
+                "v.make, v.model, v.license_plate, v.color " +
+                "FROM Rides r " +
+                "JOIN Users u ON r.driver_id = u.user_id " +
+                "LEFT JOIN Vehicles v ON u.user_id = v.user_id " +
+                "WHERE r.ride_id = ?";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(driverSql)) {
+            pstmt.setInt(1, rideId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                driverMap.put("id", rs.getInt("driver_id"));
+                driverMap.put("name", rs.getString("driver_name"));
+                driverMap.put("phone", rs.getString("driver_phone"));
+                driverMap.put("email", rs.getString("driver_email"));
+
+                vehicleMap.put("make", rs.getString("make"));
+                vehicleMap.put("model", rs.getString("model"));
+                vehicleMap.put("license_plate", rs.getString("license_plate"));
+                vehicleMap.put("color", rs.getString("color"));
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching driver/vehicle for SOS: " + e.getMessage());
+        }
+
+        // 2. Fetch Accepted Passengers
+        String passengerSql = "SELECT u.user_id, u.name, u.phone_number, u.email " +
+                "FROM Bookings b " +
+                "JOIN Users u ON b.passenger_id = u.user_id " +
+                "WHERE b.ride_id = ? AND b.booking_status IN ('ACCEPTED', 'DRIVER_ARRIVED', 'IN_TRANSIT')";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(passengerSql)) {
+            pstmt.setInt(1, rideId);
+            ResultSet rs = pstmt.executeQuery();
+            while (rs.next()) {
+                Map<String, Object> p = new HashMap<>();
+                p.put("id", rs.getInt("user_id"));
+                p.put("name", rs.getString("name"));
+                p.put("phone", rs.getString("phone_number"));
+                p.put("email", rs.getString("email"));
+                passengersList.add(p);
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching passengers for SOS: " + e.getMessage());
+        }
+
+        return details;
     }
 }

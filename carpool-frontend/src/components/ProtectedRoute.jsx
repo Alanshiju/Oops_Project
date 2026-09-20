@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { Navigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 
 const ProtectedRoute = ({ children, allowedRole }) => {
   const [authStatus, setAuthStatus] = useState(null); // null = loading
 
   useEffect(() => {
     // Ask the Java backend to verify our HttpOnly cookie
-    fetch("http://localhost:7070/api/check-auth", { credentials: "include" })
+    fetch(`${API_BASE_URL}/api/check-auth`, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : { isAuthenticated: false }))
       .then((data) => {
         setAuthStatus(data);

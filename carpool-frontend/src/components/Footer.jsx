@@ -1,21 +1,11 @@
-import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useSettings } from "../context/SettingsContext";
+import facebookIcon from "../assets/facebookicon.webp";
+import instagramIcon from "../assets/instagramicon.webp";
+import whatsappIcon from "../assets/WhatsappIcon.jpg";
 
 const Footer = () => {
-  const [socialLinks, setSocialLinks] = useState({
-    whatsapp: "",
-    facebook: "",
-    instagram: "",
-  });
-
-  useEffect(() => {
-    fetch("http://localhost:7070/api/settings/social")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data) setSocialLinks(data);
-      })
-      .catch((err) => console.error("Error fetching social links", err));
-  }, []);
+  const { settings } = useSettings();
 
   return (
     <footer className="bg-slate-900 text-slate-300 py-12 border-t border-slate-800 pb-24 md:pb-12">
@@ -80,37 +70,52 @@ const Footer = () => {
           <p className="text-sm text-slate-400 mb-4">
             Follow us for updates and community stories.
           </p>
-          <div className="flex gap-4">
-            {socialLinks.whatsapp && (
-              <a
-                href={socialLinks.whatsapp}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-10 h-10 bg-slate-800 hover:bg-emerald-500 hover:text-white rounded-full flex items-center justify-center transition-all shadow-md"
-              >
-                <span className="text-xl">💬</span>
-              </a>
-            )}
-            {socialLinks.facebook && (
-              <a
-                href={socialLinks.facebook}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-10 h-10 bg-slate-800 hover:bg-blue-600 hover:text-white rounded-full flex items-center justify-center transition-all shadow-md"
-              >
-                <span className="text-xl">📘</span>
-              </a>
-            )}
-            {socialLinks.instagram && (
-              <a
-                href={socialLinks.instagram}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-10 h-10 bg-slate-800 hover:bg-pink-600 hover:text-white rounded-full flex items-center justify-center transition-all shadow-md"
-              >
-                <span className="text-xl">📸</span>
-              </a>
-            )}
+          <div className="flex gap-4 items-center">
+            <a
+              href={settings?.contact?.facebook || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-10 h-10 bg-slate-800 hover:bg-slate-700 rounded-full flex items-center justify-center transition-all shadow-md overflow-hidden"
+              aria-label="Facebook"
+            >
+              <img
+                src={facebookIcon}
+                alt="Facebook"
+                className="w-6 h-6 object-contain rounded hover:opacity-80 transition-opacity"
+              />
+            </a>
+            <a
+              href={settings?.contact?.instagram || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-10 h-10 bg-slate-800 hover:bg-slate-700 rounded-full flex items-center justify-center transition-all shadow-md overflow-hidden"
+              aria-label="Instagram"
+            >
+              <img
+                src={instagramIcon}
+                alt="Instagram"
+                className="w-6 h-6 object-contain rounded hover:opacity-80 transition-opacity"
+              />
+            </a>
+            <a
+              href={
+                settings?.contact?.phone
+                  ? settings.contact.phone.startsWith("http")
+                    ? settings.contact.phone
+                    : `https://wa.me/${settings.contact.phone.replace(/[^0-9]/g, "")}`
+                  : "#"
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-10 h-10 bg-slate-800 hover:bg-slate-700 rounded-full flex items-center justify-center transition-all shadow-md overflow-hidden"
+              aria-label="WhatsApp"
+            >
+              <img
+                src={whatsappIcon}
+                alt="WhatsApp"
+                className="w-6 h-6 object-contain rounded hover:opacity-80 transition-opacity"
+              />
+            </a>
           </div>
         </div>
       </div>

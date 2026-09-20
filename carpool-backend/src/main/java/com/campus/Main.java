@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -15,13 +16,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.javalin.Javalin;
-import io.javalin.http.Cookie;
-import io.javalin.http.SameSite;
 import io.javalin.http.UploadedFile;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.websocket.WsContext;
@@ -30,14 +28,16 @@ public class Main {
     static Map<Integer, Coordinate> driverLocations = new ConcurrentHashMap<>();
     static Map<Integer, Coordinate> passengerLocations = new ConcurrentHashMap<>();
     static Map<Integer, Set<WsContext>> rideSessions = new ConcurrentHashMap<>();
+    public static final Set<WsContext> publicChatSessions = ConcurrentHashMap.newKeySet();
+
     static Map<Integer, List<Map<String, Object>>> rideChats = new ConcurrentHashMap<>();
 
     public static void main(String[] args) {
         ObjectMapper mapper = new ObjectMapper();
         RideDAO rideDAO = new RideDAO();
+        ChatDAO chatDAO = new ChatDAO();
         UserDAO userDAO = new UserDAO();
         AuthService authService = new AuthService();
-        // LocationService locationService = new LocationService();
 
         // Task 2 & Constraint 3: Orphaned Ride Reaper background daemon (runs every 10
         // minutes)
@@ -103,8 +103,15 @@ public class Main {
                     "estimated_duration_mins INT DEFAULT 0, " +
                     "status ENUM('PENDING', 'DRIVER_ARRIVED', 'IN_TRANSIT', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING', "
                     +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                     "FOREIGN KEY (driver_id) REFERENCES Users(user_id)" +
                     ")");
+
+            // Migration: Ensure created_at exists on Rides table
+            try {
+                stmt.execute("ALTER TABLE Rides ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+            } catch (SQLException ignore) {
+            }
 
             // 0c. Bookings Table
             stmt.execute("CREATE TABLE IF NOT EXISTS Bookings (" +
@@ -142,103 +149,21 @@ public class Main {
                     ")");
             System.out.println("Incident_Reports table verified.");
 
-            // 0f. System_Settings Table (Task 4: Dynamic Admin CMS Destination)
+            // 0f. System_Settings Table
             stmt.execute("CREATE TABLE IF NOT EXISTS System_Settings (" +
                     "setting_key VARCHAR(100) PRIMARY KEY, " +
                     "setting_value JSON NOT NULL" +
                     ")");
             System.out.println("System_Settings table verified.");
 
-            // Incremental column verification for MySQL
-            try {
-                stmt.execute(
-                        "ALTER TABLE Rides MODIFY COLUMN status ENUM('PENDING', 'DRIVER_ARRIVED', 'IN_TRANSIT', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING'");
-            } catch (Exception ignore) {
-                try {
-                    stmt.execute(
-                            "ALTER TABLE Rides ADD COLUMN status ENUM('PENDING', 'DRIVER_ARRIVED', 'IN_TRANSIT', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING'");
-                } catch (Exception ignore2) {
-                }
-            }
-            try {
-                stmt.execute(
-                        "ALTER TABLE Bookings MODIFY booking_status ENUM('PENDING', 'ACCEPTED', 'REJECTED', 'DRIVER_ARRIVED', 'COMPLETED', 'CANCELLED') DEFAULT 'PENDING'");
-            } catch (Exception ignore) {
-                System.err.println("Error modifying Bookings ENUM: " + ignore.getMessage());
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN distance_km DOUBLE DEFAULT 0.0");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN cost_per_seat DOUBLE DEFAULT 0.0");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN is_free_ride BOOLEAN DEFAULT FALSE");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN is_emergency BOOLEAN DEFAULT FALSE");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN emergency_reported_at TIMESTAMP NULL");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN route_linestring LINESTRING NULL");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides MODIFY route_linestring LINESTRING SRID 4326");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("CREATE SPATIAL INDEX sx_route_linestring ON Rides(route_linestring)");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Rides ADD COLUMN estimated_duration_mins INT DEFAULT 0");
-            } catch (Exception ignore) {
-            }
-
-            try {
-                stmt.execute("ALTER TABLE Users ADD COLUMN otp_code VARCHAR(6)");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Users ADD COLUMN otp_expires_at TIMESTAMP NULL");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Users ADD COLUMN is_email_verified BOOLEAN DEFAULT FALSE");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Users ADD COLUMN favorite_route VARCHAR(2000)");
-            } catch (Exception ignore) {
-            }
-
-            try {
-                stmt.execute(
-                        "ALTER TABLE Bookings MODIFY COLUMN booking_status ENUM('PENDING', 'ACCEPTED', 'REJECTED', 'DRIVER_ARRIVED', 'CANCELLED') DEFAULT 'PENDING'");
-            } catch (Exception ignore) {
-                try {
-                    stmt.execute(
-                            "ALTER TABLE Bookings ADD COLUMN booking_status ENUM('PENDING', 'ACCEPTED', 'REJECTED', 'DRIVER_ARRIVED', 'CANCELLED') DEFAULT 'PENDING'");
-                } catch (Exception ignore2) {
-                }
-            }
-            try {
-                stmt.execute("ALTER TABLE Bookings ADD COLUMN pickup_lat DOUBLE");
-            } catch (Exception ignore) {
-            }
-            try {
-                stmt.execute("ALTER TABLE Bookings ADD COLUMN pickup_lng DOUBLE");
-            } catch (Exception ignore) {
-            }
-            System.out.println("MySQL table schemas and constraints verified.");
+            // 0g. Public Chat Table
+            stmt.execute("CREATE TABLE IF NOT EXISTS Public_Chat_Messages (" +
+                    "id INT AUTO_INCREMENT PRIMARY KEY, " +
+                    "sender_name VARCHAR(255), " +
+                    "message TEXT, " +
+                    "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP" +
+                    ")");
+            System.out.println("Public_Chat_Messages table verified.");
 
         } catch (SQLException e) {
             System.err.println("Error initializing DB schema: " + e.getMessage());
@@ -247,17 +172,16 @@ public class Main {
         Javalin app = Javalin.create(config -> {
             config.bundledPlugins.enableCors(cors -> {
                 cors.addRule(it -> {
-                    it.allowHost("http://localhost:5173");
+                    it.allowHost("http://localhost:5173", "https://nexify.kaliwebworkspace.in");
                     it.allowCredentials = true;
                 });
             });
-            // 2. Tell Javalin to serve the images publicly so React can load them
             config.staticFiles.add(staticFiles -> {
                 staticFiles.hostedPath = "/uploads";
                 staticFiles.directory = "uploads";
                 staticFiles.location = Location.EXTERNAL;
             });
-        }).start(7070);
+        });
 
         System.out.println("SERVER IS RUNNING! Listening for frontend requests...");
 
@@ -267,7 +191,7 @@ public class Main {
         // 2. Booking Endpoint
         app.post("/api/book", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -313,7 +237,7 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to book seat."));
                 }
-            } catch (JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error processing booking: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error processing booking."));
             }
@@ -339,25 +263,23 @@ public class Main {
 
                 boolean isSaved = rideDAO.saveRouteDetails(rideId, routeGeometryJson, distanceKm, isFreeRide,
                         estimatedDurationMins);
-
                 if (isSaved)
                     ctx.status(200).json(Map.of("message", "Route saved!"));
                 else
                     ctx.status(400).json(Map.of("error", "Database failed to save the route."));
-            } catch (NumberFormatException | JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error saving route: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Failed to parse route data."));
             }
         });
 
-        // 4. Search Nearby Rides Endpoint (Task 1 & Task 2: MySQL Spatial Engine &
-        // Route Projection)
+        // 4. Search Nearby Rides Endpoint
         app.post("/api/rides/search", ctx -> {
             try {
                 Coordinate studentLoc = mapper.readValue(ctx.body(), Coordinate.class);
                 List<Ride> matchingRides = rideDAO.searchNearbyRides(studentLoc.getLat(), studentLoc.getLng());
                 ctx.status(200).json(matchingRides);
-            } catch (JsonProcessingException e) {
+            } catch (Exception e) {
                 System.err.println("Error searching rides: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Failed to search for rides."));
             }
@@ -387,7 +309,7 @@ public class Main {
             try {
                 List<User> pendingUsers = userDAO.getPendingVerifications();
                 ctx.status(200).json(pendingUsers);
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error fetching pending users: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Failed to fetch pending users."));
             }
@@ -402,13 +324,13 @@ public class Main {
                     ctx.status(200).json(Map.of("message", "User verified!"));
                 else
                     ctx.status(400).json(Map.of("error", "Failed to verify user."));
-            } catch (NumberFormatException e) {
+            } catch (Exception e) {
                 System.err.println("Error approving user: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error."));
             }
         });
 
-        // 6b. Admin: Audit Logs with T-SQL Pagination support
+        // 6b. Admin: Audit Logs
         app.get("/api/admin/rides/audit", ctx -> {
             try {
                 String offsetParam = ctx.queryParam("offset");
@@ -440,17 +362,12 @@ public class Main {
 
                 if (user != null && user.getPassword() != null && userDAO.verifyLogin(password, user.getPassword())) {
                     String token = authService.generateToken(user);
-                    Cookie cookie = new Cookie("jwt", token);
-                    cookie.setHttpOnly(true);
-                    cookie.setPath("/");
-                    cookie.setSameSite(SameSite.LAX);
-                    ctx.cookie(cookie);
-
+                    authService.setAuthCookie(ctx, token);
                     ctx.status(200).json(Map.of("message", "Welcome back!", "role", user.getRole()));
                 } else {
                     ctx.status(401).json(Map.of("error", "Invalid email or password."));
                 }
-            } catch (JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error during login: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error during login."));
             }
@@ -458,14 +375,14 @@ public class Main {
 
         // 7b. Logout Endpoint
         app.post("/api/logout", ctx -> {
-            ctx.removeCookie("jwt");
+            authService.clearAuthCookie(ctx);
             ctx.status(200).json(Map.of("message", "Logged out securely."));
         });
 
         // 8. Create a New Ride
         app.post("/api/rides/create", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -490,16 +407,15 @@ public class Main {
                     ctx.status(200).json(Map.of("message", "Ride initialized!", "rideId", newRideId));
                 else
                     ctx.status(400).json(Map.of("error", "Failed to create ride."));
-            } catch (JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error creating ride: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error."));
             }
         });
 
-        // 9. Registration Endpoint - MASSIVE OVERHAUL FOR FILE UPLOADS
+        // 9. Registration Endpoint
         app.post("/api/register", ctx -> {
             try {
-                // Read text fields from the Multipart Form
                 String name = ctx.formParam("name");
                 String email = ctx.formParam("email");
                 String password = ctx.formParam("password");
@@ -510,48 +426,24 @@ public class Main {
                     return;
                 }
 
-                // Read the actual image files
                 UploadedFile collegeIdFile = ctx.uploadedFile("collegeId");
                 UploadedFile selfieFile = ctx.uploadedFile("selfie");
 
-                String collegeIdUrl = null;
-                String selfieUrl = null;
+                String collegeIdUrl = saveUploadedFile(ctx, collegeIdFile, "id");
+                String selfieUrl = saveUploadedFile(ctx, selfieFile, "selfie");
 
-                // Process and save the College ID image
-                if (collegeIdFile != null) {
-                    // Generate a unique filename using timestamp to prevent overwriting
-                    String filename = System.currentTimeMillis() + "_id_"
-                            + collegeIdFile.filename().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
-                    Files.copy(collegeIdFile.content(), Path.of("uploads/" + filename),
-                            StandardCopyOption.REPLACE_EXISTING);
-                    collegeIdUrl = "http://localhost:7070/uploads/" + filename; // Save the full URL
-                }
-
-                // Process and save the Selfie image
-                if (selfieFile != null) {
-                    String filename = System.currentTimeMillis() + "_selfie_"
-                            + selfieFile.filename().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
-                    Files.copy(selfieFile.content(), Path.of("uploads/" + filename),
-                            StandardCopyOption.REPLACE_EXISTING);
-                    selfieUrl = "http://localhost:7070/uploads/" + filename; // Save the full URL
-                }
-
-                // Save user and image URLs to MySQL
                 boolean success = userDAO.registerUser(name, email, password, role, collegeIdUrl, selfieUrl);
 
                 if (success) {
-                    // Generate and "send" OTP
                     String otp = userDAO.generateAndStoreOtp(email);
-                    System.out.println("=================================================");
-                    System.out.println("EMAIL OTP FOR " + email + ": " + otp);
-                    System.out.println("=================================================");
+                    EmailService.sendOtpEmail(email, otp);
                     ctx.status(200)
                             .json(Map.of("message", "Registration successful! Please check your email for the OTP.",
                                     "requireOtp", true, "email", email));
                 } else {
                     ctx.status(400).json(Map.of("error", "Registration failed. Email might already exist."));
                 }
-            } catch (IOException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error processing file uploads: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error processing file uploads."));
             }
@@ -572,7 +464,7 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Invalid or expired OTP."));
                 }
-            } catch (JsonProcessingException e) {
+            } catch (Exception e) {
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
@@ -586,14 +478,12 @@ public class Main {
 
                 String newOtp = userDAO.generateAndStoreOtp(email);
                 if (newOtp != null) {
-                    System.out.println("=================================================");
-                    System.out.println("RESENT EMAIL OTP FOR " + email + ": " + newOtp);
-                    System.out.println("=================================================");
+                    EmailService.sendOtpEmail(email, newOtp);
                     ctx.status(200).json(Map.of("message", "A new OTP has been sent."));
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to generate OTP. User might not exist."));
                 }
-            } catch (JsonProcessingException e) {
+            } catch (Exception e) {
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
@@ -601,7 +491,7 @@ public class Main {
         // 10. Student: Get Booking History
         app.get("/api/bookings/my-rides", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -614,15 +504,15 @@ public class Main {
 
                 List<Map<String, Object>> myBookings = rideDAO.getPassengerBookings(passengerId);
                 ctx.status(200).json(myBookings);
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error fetching bookings: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error fetching bookings."));
             }
         });
 
-        // 11. User Profile APIs (Task 1)
+        // 11. User Profile APIs
         app.get("/api/user/profile", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -641,7 +531,7 @@ public class Main {
         });
 
         app.put("/api/user/profile", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -663,13 +553,13 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to update profile"));
                 }
-            } catch (JsonProcessingException e) {
+            } catch (Exception e) {
                 ctx.status(400).json(Map.of("error", "Invalid request body"));
             }
         });
 
         app.post("/api/user/change-password", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -696,7 +586,7 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Incorrect current password or server error."));
                 }
-            } catch (JsonProcessingException e) {
+            } catch (Exception e) {
                 ctx.status(400).json(Map.of("error", "Invalid request body"));
             }
         });
@@ -704,7 +594,7 @@ public class Main {
         // 12. Check Auth Status
         app.get("/api/check-auth", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("isAuthenticated", false));
                     return;
@@ -717,21 +607,24 @@ public class Main {
                 }
 
                 boolean isVerified = authService.validateTokenAndGetIsVerified(token);
+                int userId = authService.validateTokenAndGetUserId(token);
+                String name = userDAO.getUserNameById(userId);
 
                 ctx.status(200).json(Map.of(
                         "isAuthenticated", true,
                         "role", role,
-                        "isVerified", isVerified));
-            } catch (NullPointerException | IllegalArgumentException e) {
+                        "isVerified", isVerified,
+                        "name", name != null ? name : "User"));
+            } catch (Exception e) {
                 System.err.println("Error checking auth status: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 12. Check Active Status (is driver offering, or passenger booked)
+        // 12b. Check Active Status
         app.get("/api/user/active-status", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -771,7 +664,7 @@ public class Main {
                 }
 
                 ctx.status(200).json(response);
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error checking active status: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error checking active status."));
             }
@@ -780,7 +673,7 @@ public class Main {
         // 13. Cancel Offered Ride
         app.post("/api/rides/cancel", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -790,7 +683,7 @@ public class Main {
                     ctx.status(401).json(Map.of("error", "Invalid session."));
                     return;
                 }
-                int currentRideId = rideDAO.getActiveRideIdByDriver(userId); // Get before cancelling
+                int currentRideId = rideDAO.getActiveRideIdByDriver(userId);
                 boolean success = rideDAO.cancelOfferedRide(userId);
                 if (success) {
                     ctx.status(200).json(Map.of("message", "Ride cancelled successfully."));
@@ -808,7 +701,7 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to cancel ride."));
                 }
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error cancelling ride: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error cancelling ride."));
             }
@@ -817,7 +710,7 @@ public class Main {
         // 14. Cancel Booking
         app.post("/api/bookings/cancel", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -834,7 +727,7 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to cancel booking."));
                 }
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error cancelling booking: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error cancelling booking."));
             }
@@ -854,7 +747,7 @@ public class Main {
         app.post("/api/bookings/{bookingId}/{action}", ctx -> {
             try {
                 int bookingId = Integer.parseInt(ctx.pathParam("bookingId"));
-                String action = ctx.pathParam("action"); // "accept", "reject", "arrived"
+                String action = ctx.pathParam("action");
                 int rideId = rideDAO.getRideIdByBookingId(bookingId);
                 if (rideId == -1) {
                     ctx.status(404).json(Map.of("error", "Booking not found"));
@@ -881,7 +774,6 @@ public class Main {
                 boolean success = rideDAO.updateBookingStatus(bookingId, newStatus);
                 if (success) {
                     ctx.status(200).json(Map.of("message", "Booking updated to " + newStatus));
-                    // Broadcast to student
                     Set<WsContext> sessions = rideSessions.get(rideId);
                     if (sessions != null && !sessions.isEmpty()) {
                         for (WsContext session : sessions) {
@@ -902,7 +794,7 @@ public class Main {
         // 15. Live Location Updates
         app.post("/api/location/update", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401);
                     return;
@@ -933,9 +825,6 @@ public class Main {
                         driverLocations.put(rideId, loc);
 
                         List<Map<String, Object>> acceptedPassengers = rideDAO.getAcceptedPassengersForRide(rideId);
-
-                        // Task 3 & Constraint 2: Calculate live ETA with 1.4 tortuosity factor for
-                        // accepted passengers
                         Map<Integer, Integer> passengerEtas = new java.util.HashMap<>();
                         Integer generalEta = null;
                         for (Map<String, Object> passenger : acceptedPassengers) {
@@ -960,19 +849,16 @@ public class Main {
                                                     ? passengerEtas.get(sessionUserId)
                                                     : generalEta;
                                     String telemetryJson = "{\"type\": \"TELEMETRY_UPDATE\", \"lat\": " + lat
-                                            + ", \"lng\": "
-                                            + lng + ", \"role\": \"DRIVER\""
+                                            + ", \"lng\": " + lng + ", \"role\": \"DRIVER\""
                                             + (sessionEta != null ? ", \"eta_minutes\": " + sessionEta : "")
                                             + "}";
                                     session.send(telemetryJson);
-                                } catch (org.eclipse.jetty.websocket.api.exceptions.WebSocketException
-                                        | IllegalStateException e) {
+                                } catch (Exception e) {
                                     System.err.println("Error broadcasting location via WS: " + e.getMessage());
                                 }
                             }
                         }
 
-                        // Task 4 & Constraint 2: Geofenced Auto-Arrival (< 50m) with strict idempotency
                         for (Map<String, Object> passenger : acceptedPassengers) {
                             String bStatus = (String) passenger.get("status");
                             if ("ACCEPTED".equals(bStatus) && passenger.get("lat") != null
@@ -983,8 +869,6 @@ public class Main {
 
                                 if (distMeters <= 50.0) {
                                     int bookingId = (Integer) passenger.get("bookingId");
-                                    // Strictly updates only if booking_status == 'ACCEPTED'; returns true only if
-                                    // rows affected == 1
                                     boolean markedArrived = rideDAO.markBookingArrivedIfAccepted(bookingId);
                                     if (markedArrived && sessions != null && !sessions.isEmpty()) {
                                         for (WsContext session : sessions) {
@@ -1006,13 +890,13 @@ public class Main {
                     passengerLocations.put(userId, loc);
                 }
                 ctx.status(200).json(Map.of("status", "ok"));
-            } catch (JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error updating location: " + e.getMessage());
                 ctx.status(500);
             }
         });
 
-        // 16. Get Live Data for a Ride (Task 2: Student Route Projection)
+        // 16. Get Live Data for a Ride
         app.get("/api/rides/{rideId}/live", ctx -> {
             try {
                 int rideId = Integer.parseInt(ctx.pathParam("rideId"));
@@ -1044,15 +928,15 @@ public class Main {
                 responseData.put("routeGeometry", routeGeometry);
 
                 ctx.status(200).json(responseData);
-            } catch (NumberFormatException e) {
+            } catch (Exception e) {
                 System.err.println("Error fetching live ride data: " + e.getMessage());
                 ctx.status(500);
             }
         });
 
-        // Task 2: Admin User Management APIs
+        // Admin User Management APIs
         app.get("/api/admin/users", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -1068,7 +952,7 @@ public class Main {
         });
 
         app.put("/api/admin/users/{id}/status", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -1085,13 +969,13 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to update user"));
                 }
-            } catch (NumberFormatException e) {
+            } catch (Exception e) {
                 ctx.status(400).json(Map.of("error", "Invalid user ID"));
             }
         });
 
         app.delete("/api/admin/users/{id}", ctx -> {
-            String token = ctx.cookie("jwt");
+            String token = authService.extractToken(ctx);
             if (token == null) {
                 ctx.status(401).json(Map.of("error", "Unauthorized"));
                 return;
@@ -1108,15 +992,46 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to delete user"));
                 }
-            } catch (NumberFormatException e) {
+            } catch (Exception e) {
                 ctx.status(400).json(Map.of("error", "Invalid user ID"));
             }
         });
 
-        // Task 4: Dynamic Admin CMS Destination Endpoints
-        app.post("/api/admin/settings/destination", ctx -> {
+        app.get("/api/public-chat/history", ctx -> {
+            ctx.status(200).json(chatDAO.getRecentPublicMessages(50));
+        });
+
+        // Unified CMS Settings Endpoints
+        app.get("/api/settings/config", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String locJson = rideDAO.getSetting("COLLEGE_DESTINATION");
+                String contactJson = rideDAO.getSetting("CONTACT_INFO");
+
+                Map<String, Object> config = new java.util.HashMap<>();
+                if (locJson != null && !locJson.trim().isEmpty()) {
+                    config.put("location", mapper.readValue(locJson, new TypeReference<Map<String, Double>>() {
+                    }));
+                } else {
+                    config.put("location", Map.of("lat", 10.728, "lng", 76.2792));
+                }
+
+                if (contactJson != null && !contactJson.trim().isEmpty()) {
+                    config.put("contact", mapper.readValue(contactJson, new TypeReference<Map<String, String>>() {
+                    }));
+                } else {
+                    config.put("contact", Map.of("phone", "", "email", "", "facebook", "", "instagram", ""));
+                }
+
+                ctx.status(200).json(config);
+            } catch (Exception e) {
+                System.err.println("Error fetching settings config: " + e.getMessage());
+                ctx.status(500).json(Map.of("error", "Failed to fetch settings config"));
+            }
+        });
+
+        app.post("/api/admin/settings/location", ctx -> {
+            try {
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized"));
                     return;
@@ -1134,41 +1049,23 @@ public class Main {
                     return;
                 }
 
-                double lat = payload.get("lat");
-                double lng = payload.get("lng");
-                String jsonSetting = mapper.writeValueAsString(Map.of("lat", lat, "lng", lng));
-
+                String jsonSetting = mapper
+                        .writeValueAsString(Map.of("lat", payload.get("lat"), "lng", payload.get("lng")));
                 boolean saved = rideDAO.saveSetting("COLLEGE_DESTINATION", jsonSetting);
                 if (saved) {
-                    ctx.status(200).json(
-                            Map.of("message", "Campus destination updated successfully!", "lat", lat, "lng", lng));
+                    ctx.status(200).json(Map.of("message", "Location updated successfully!"));
                 } else {
-                    ctx.status(500).json(Map.of("error", "Failed to update destination in database"));
+                    ctx.status(500).json(Map.of("error", "Failed to update location"));
                 }
             } catch (Exception e) {
-                System.err.println("Error setting campus destination: " + e.getMessage());
-                ctx.status(500).json(Map.of("error", "Server error updating destination"));
+                System.err.println("Error setting location: " + e.getMessage());
+                ctx.status(500).json(Map.of("error", "Server error updating location"));
             }
         });
 
-        app.get("/api/settings/destination", ctx -> {
+        app.post("/api/admin/settings/contact", ctx -> {
             try {
-                String settingJson = rideDAO.getSetting("COLLEGE_DESTINATION");
-                if (settingJson != null && !settingJson.trim().isEmpty()) {
-                    ctx.status(200).result(settingJson).contentType("application/json");
-                } else {
-                    // Default fallback destination (Jyothi Engineering College)
-                    ctx.status(200).json(Map.of("lat", 10.728, "lng", 76.2792));
-                }
-            } catch (Exception e) {
-                System.err.println("Error fetching campus destination: " + e.getMessage());
-                ctx.status(200).json(Map.of("lat", 10.728, "lng", 76.2792));
-            }
-        });
-
-        app.post("/api/admin/settings/social", ctx -> {
-            try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized"));
                     return;
@@ -1179,47 +1076,25 @@ public class Main {
                     return;
                 }
 
-                Map<String, String> payload = mapper.readValue(ctx.body(), new TypeReference<Map<String, String>>() {});
+                Map<String, String> payload = mapper.readValue(ctx.body(), new TypeReference<Map<String, String>>() {
+                });
                 String jsonSetting = mapper.writeValueAsString(payload);
-
-                boolean saved = rideDAO.saveSetting("SOCIAL_LINKS", jsonSetting);
+                boolean saved = rideDAO.saveSetting("CONTACT_INFO", jsonSetting);
                 if (saved) {
-                    ctx.status(200).json(Map.of("message", "Social links updated successfully!"));
+                    ctx.status(200).json(Map.of("message", "Contact details updated successfully!"));
                 } else {
-                    ctx.status(500).json(Map.of("error", "Failed to update social links in database"));
+                    ctx.status(500).json(Map.of("error", "Failed to update contact details"));
                 }
             } catch (Exception e) {
-                System.err.println("Error setting social links: " + e.getMessage());
-                ctx.status(500).json(Map.of("error", "Server error updating social links"));
+                System.err.println("Error setting contact: " + e.getMessage());
+                ctx.status(500).json(Map.of("error", "Server error updating contact details"));
             }
         });
 
-        app.get("/api/settings/social", ctx -> {
-            try {
-                String settingJson = rideDAO.getSetting("SOCIAL_LINKS");
-                if (settingJson != null && !settingJson.trim().isEmpty()) {
-                    ctx.status(200).result(settingJson).contentType("application/json");
-                } else {
-                    ctx.status(200).json(Map.of(
-                        "whatsapp", "",
-                        "facebook", "",
-                        "instagram", ""
-                    ));
-                }
-            } catch (Exception e) {
-                System.err.println("Error fetching social links: " + e.getMessage());
-                ctx.status(200).json(Map.of(
-                    "whatsapp", "",
-                    "facebook", "",
-                    "instagram", ""
-                ));
-            }
-        });
-
-        // 17. Save Vehicle Profile
+        // Vehicle Profile APIs
         app.post("/api/profile/vehicle", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401);
                     return;
@@ -1239,16 +1114,15 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to save vehicle profile."));
                 }
-            } catch (JsonProcessingException | NullPointerException e) {
+            } catch (Exception e) {
                 System.err.println("Error saving vehicle profile: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 18. Get Vehicle Profile
         app.get("/api/profile/vehicle", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401);
                     return;
@@ -1265,16 +1139,16 @@ public class Main {
                 } else {
                     ctx.status(200).result("null").contentType("application/json");
                 }
-            } catch (NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error fetching vehicle profile: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 18b. Save Favorite Route
+        // Favorite Routes APIs
         app.post("/api/user/route/favorite", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401);
                     return;
@@ -1302,10 +1176,9 @@ public class Main {
             }
         });
 
-        // 18c. Get Favorite Route
         app.get("/api/user/route/favorite", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401);
                     return;
@@ -1328,10 +1201,10 @@ public class Main {
             }
         });
 
-        // 20. Update Ride Status
+        // Update Ride Status
         app.post("/api/rides/{id}/status", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -1367,13 +1240,13 @@ public class Main {
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to update status."));
                 }
-            } catch (JsonProcessingException | NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error updating status: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 21. Analytics Endpoint
+        // Analytics Endpoint
         app.get("/api/analytics", ctx -> {
             try {
                 Map<String, Object> stats = rideDAO.getCampusAnalytics();
@@ -1394,10 +1267,10 @@ public class Main {
             }
         });
 
-        // 23. SOS Emergency Endpoint
+        // SOS Emergency Endpoint
         app.post("/api/rides/{id}/sos", ctx -> {
             try {
-                String token = ctx.cookie("jwt");
+                String token = authService.extractToken(ctx);
                 if (token == null) {
                     ctx.status(401).json(Map.of("error", "Unauthorized."));
                     return;
@@ -1428,33 +1301,52 @@ public class Main {
                             }
                         }
                     }
+
+                    // Task 4: Gather Full Ride Details & Send SOS Email
+                    try {
+                        Map<String, Object> fullDetails = rideDAO.getFullRideDetailsForSos(rideId);
+                        String adminEmail = "admin@jecc.ac.in";
+                        String contactJson = rideDAO.getSetting("CONTACT_INFO");
+                        if (contactJson != null && !contactJson.trim().isEmpty()) {
+                            Map<String, String> contactMap = mapper.readValue(contactJson,
+                                    new TypeReference<Map<String, String>>() {
+                                    });
+                            if (contactMap.containsKey("email") && !contactMap.get("email").isBlank()) {
+                                adminEmail = contactMap.get("email");
+                            }
+                        }
+                        EmailService.sendSosEmail(adminEmail, fullDetails, lat, lng);
+                    } catch (Exception e) {
+                        System.err.println("Error triggering SOS email dispatch: " + e.getMessage());
+                    }
+
                     ctx.status(200).json(Map.of("message", "Emergency alert dispatched."));
                 } else {
                     ctx.status(400).json(Map.of("error", "Failed to dispatch SOS."));
                 }
-            } catch (JsonProcessingException | NullPointerException | IllegalArgumentException e) {
+            } catch (Exception e) {
                 System.err.println("Error reporting SOS: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 22. Chat History Endpoint
+        // Chat History Endpoint
         app.get("/api/rides/{rideId}/chat", ctx -> {
             try {
                 int rideId = Integer.parseInt(ctx.pathParam("rideId"));
                 List<Map<String, Object>> chatHistory = rideChats.getOrDefault(rideId, new ArrayList<>());
                 ctx.status(200).json(chatHistory);
-            } catch (NumberFormatException e) {
+            } catch (Exception e) {
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
         });
 
-        // 19. WebSocket Live Tracking Endpoint
+        // WebSocket Live Tracking Endpoint
         app.ws("/ws/rides/{rideId}/live", ws -> {
             ws.onConnect(ctx -> {
                 ctx.session.setIdleTimeout(java.time.Duration.ofMillis(3600000));
                 try {
-                    String token = ctx.cookie("jwt");
+                    String token = ctx.cookie("token") != null ? ctx.cookie("token") : ctx.cookie("jwt");
                     if (token != null) {
                         int userId = authService.validateTokenAndGetUserId(token);
                         if (userId != -1) {
@@ -1484,7 +1376,6 @@ public class Main {
                             });
 
                     if ("CHAT_MESSAGE".equals(message.get("type"))) {
-                        // Secure WebSocket Identity Verification
                         Object sessionName = ctx.attribute("userName");
                         Object sessionId = ctx.attribute("userId");
                         if (sessionName != null) {
@@ -1499,14 +1390,11 @@ public class Main {
                             try {
                                 targetUserId = Integer.parseInt(message.get("targetUserId").toString());
                             } catch (NumberFormatException e) {
-                                // Ignore
                             }
                         }
 
-                        // Save to history
                         rideChats.computeIfAbsent(rideId, k -> new ArrayList<>()).add(message);
 
-                        // Broadcast to sender and target only
                         Set<WsContext> sessions = rideSessions.get(rideId);
                         if (sessions != null) {
                             String msgJson = mapper.writeValueAsString(message);
@@ -1537,9 +1425,7 @@ public class Main {
                             rideSessions.remove(rideId);
                         }
                     }
-                    System.out.println("WebSocket closed for ride " + rideId + " (session: " + ctx.sessionId() + ")");
-                } catch (NumberFormatException e) {
-                    System.err.println("WebSocket onClose error: " + e.getMessage());
+                } catch (Exception e) {
                 }
             });
 
@@ -1553,19 +1439,85 @@ public class Main {
                             rideSessions.remove(rideId);
                         }
                     }
-                    Throwable err = ctx.error();
-                    if (err != null) {
-                        System.err
-                                .println("WebSocket error for ride " + rideId + " (session: " + ctx.sessionId() + "): "
-                                        + err.getMessage());
-                    } else {
-                        System.err
-                                .println("WebSocket error for ride " + rideId + " (session: " + ctx.sessionId() + ")");
-                    }
-                } catch (NumberFormatException e) {
-                    System.err.println("WebSocket onError error: " + e.getMessage());
+                } catch (Exception e) {
                 }
             });
         });
+
+        // Public Global Chat WebSocket
+        app.ws("/ws/public-chat", ws -> {
+            ws.onConnect(ctx -> {
+                try {
+                    String token = ctx.cookie("token") != null ? ctx.cookie("token") : ctx.cookie("jwt");
+                    if (token != null) {
+                        int userId = authService.validateTokenAndGetUserId(token);
+                        if (userId != -1) {
+                            String name = userDAO.getUserNameById(userId);
+                            if (name != null && !name.isBlank()) {
+                                ctx.attribute("userName", name);
+                                ctx.attribute("userId", userId);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Public chat onConnect auth error: " + e.getMessage());
+                }
+                publicChatSessions.add(ctx);
+                System.out.println("New public chat connection: " + ctx.sessionId());
+            });
+            ws.onMessage(ctx -> {
+                try {
+                    Map<String, String> payload = mapper.readValue(ctx.message(),
+                            new TypeReference<Map<String, String>>() {
+                            });
+                    String sessionName = ctx.attribute("userName");
+                    String sender = sessionName != null ? sessionName : payload.getOrDefault("senderName", "Anonymous");
+                    String msg = payload.getOrDefault("text", "");
+                    String timestamp = payload.getOrDefault("timestamp",
+                            new java.text.SimpleDateFormat("hh:mm a").format(new java.util.Date()));
+
+                    // Save to DB
+                    chatDAO.savePublicMessage(sender, msg);
+
+                    // Construct strict JSON response map before broadcasting
+                    Map<String, Object> broadcastMap = new HashMap<>();
+                    broadcastMap.put("senderName", sender);
+                    broadcastMap.put("text", msg);
+                    broadcastMap.put("timestamp", timestamp);
+                    String broadcastJson = mapper.writeValueAsString(broadcastMap);
+
+                    // Re-broadcast formatted JSON safely
+                    for (WsContext session : publicChatSessions) {
+                        if (session.session.isOpen()) {
+                            session.send(broadcastJson);
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing public chat message: " + e.getMessage());
+                }
+            });
+            ws.onClose(ctx -> {
+                publicChatSessions.remove(ctx);
+                System.out.println("Public chat connection closed: " + ctx.sessionId());
+            });
+        });
+
+        // Start server after all routes are registered
+        app.start(7070);
+    }
+
+    // Helper for generating dynamic public upload URLs (Cloudflare safe)
+    private static String saveUploadedFile(io.javalin.http.Context ctx, UploadedFile file, String prefix)
+            throws IOException {
+        if (file == null)
+            return null;
+        String filename = System.currentTimeMillis() + "_" + prefix + "_"
+                + file.filename().replaceAll("[^a-zA-Z0-9\\.\\-]", "_");
+        Files.copy(file.content(), Path.of("uploads/" + filename), StandardCopyOption.REPLACE_EXISTING);
+
+        String scheme = ctx.header("X-Forwarded-Proto") != null ? ctx.header("X-Forwarded-Proto") : ctx.scheme();
+        String host = ctx.header("X-Forwarded-Host") != null ? ctx.header("X-Forwarded-Host") : ctx.host();
+
+        return scheme + "://" + host + "/uploads/" + filename;
     }
 }
