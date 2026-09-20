@@ -26,6 +26,7 @@ import ScrollToTop from "./components/ScrollToTop";
 function AppContent() {
   const location = useLocation();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
   const [profileName, setProfileName] = useState("");
 
   useEffect(() => {
@@ -34,12 +35,17 @@ function AppContent() {
       .then((data) => {
         if (data && data.isAuthenticated) {
           setIsAuthenticated(true);
+          setIsVerified(Boolean(data.isVerified));
           setProfileName(data.name || "User");
         } else {
           setIsAuthenticated(false);
+          setIsVerified(false);
         }
       })
-      .catch(() => setIsAuthenticated(false));
+      .catch(() => {
+        setIsAuthenticated(false);
+        setIsVerified(false);
+      });
   }, [location.pathname]);
 
   const hideGlobalWidget = ["/driver", "/student", "/forums"].includes(
@@ -109,7 +115,7 @@ function AppContent() {
           }
         />
       </Routes>
-      {!hideGlobalWidget && isAuthenticated && (
+      {!hideGlobalWidget && isAuthenticated && isVerified && (
         <GlobalChatWidget profileName={profileName} />
       )}
     </div>

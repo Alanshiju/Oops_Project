@@ -276,10 +276,26 @@ public class UserDAO {
         return "Student";
     }
 
+    public boolean isUserVerified(int userId) {
+        String sql = "SELECT is_verified FROM Users WHERE user_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getBoolean("is_verified");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error checking user verification: " + e.getMessage());
+        }
+        return false;
+    }
+
     // --- Task 1: User Profile APIs ---
 
     public java.util.Map<String, Object> getUserProfile(int userId) {
-        String sql = "SELECT user_id, name, email, phone_number, role, is_verified, college_id_url FROM Users WHERE user_id = ?";
+        String sql = "SELECT user_id, name, email, phone_number, role, is_verified, college_id_url, verification_photo_url FROM Users WHERE user_id = ?";
         try (Connection conn = DatabaseConnection.getConnection();
                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, userId);
@@ -292,7 +308,14 @@ public class UserDAO {
                 profile.put("phone", rs.getString("phone_number"));
                 profile.put("role", rs.getString("role"));
                 profile.put("is_verified", rs.getBoolean("is_verified"));
-                profile.put("college_id_url", rs.getString("college_id_url"));
+                String collegeId = rs.getString("college_id_url");
+                String verificationPhoto = rs.getString("verification_photo_url");
+                profile.put("college_id_url", collegeId);
+                profile.put("idUrl", collegeId);
+                profile.put("verification_photo_url", verificationPhoto);
+                profile.put("selfie_url", verificationPhoto);
+                profile.put("profile_photo_url", verificationPhoto);
+                profile.put("photoUrl", verificationPhoto);
                 return profile;
             }
         } catch (SQLException e) {

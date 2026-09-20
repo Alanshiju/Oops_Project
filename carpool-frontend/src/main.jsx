@@ -11,3 +11,11 @@ createRoot(document.getElementById("root")).render(
     </SettingsProvider>
   </StrictMode>,
 );
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch((err) => console.log("SW Reg failed:", err));
+  });
+}

@@ -86,6 +86,13 @@ const DriverDashboard = () => {
 
   const [distanceKm, setDistanceKm] = useState(0);
   const [isFreeRide, setIsFreeRide] = useState(false);
+  const maxFare = Math.floor((distanceKm * 5) / (seats || 1) / 2);
+  const [customFare, setCustomFare] = useState(maxFare);
+
+  useEffect(() => {
+    setCustomFare(maxFare);
+  }, [maxFare]);
+
   const [rideStatus, setRideStatus] = useState("PENDING");
   const rideStatusRef = useRef("PENDING");
 
@@ -220,6 +227,17 @@ const DriverDashboard = () => {
       })
       .catch((err) => console.error(err));
   };
+
+  // Request browser notification permissions on mount
+  useEffect(() => {
+    if (
+      "Notification" in window &&
+      Notification.permission !== "granted" &&
+      Notification.permission !== "denied"
+    ) {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Task 4: Complete State Hydration on Refresh & Fix Dummy Ride ID bug
   useEffect(() => {
@@ -473,8 +491,46 @@ const DriverDashboard = () => {
             setChatMessages((prev) => [...prev, data]);
           } else if (data.type === "SOS_ALERT") {
             toast.error("SOS EMERGENCY TRIGGERED FOR THIS RIDE!");
+            if (
+              "Notification" in window &&
+              Notification.permission === "granted"
+            ) {
+              if (navigator.serviceWorker) {
+                navigator.serviceWorker.ready.then((registration) => {
+                  registration.showNotification("CampusPool Driver", {
+                    body: "SOS Emergency Triggered!",
+                    icon: "/favicon.ico",
+                    vibrate: [200, 100, 200],
+                  });
+                });
+              } else {
+                new Notification("CampusPool Driver", {
+                  body: "SOS Emergency Triggered!",
+                  icon: "/favicon.ico",
+                });
+              }
+            }
           } else if (data.type === "NEW_BOOKING_REQUEST") {
             toast("🔔 New booking request from " + data.name);
+            if (
+              "Notification" in window &&
+              Notification.permission === "granted"
+            ) {
+              if (navigator.serviceWorker) {
+                navigator.serviceWorker.ready.then((registration) => {
+                  registration.showNotification("CampusPool Driver", {
+                    body: `New booking request from ${data.name || "a passenger"}`,
+                    icon: "/favicon.ico",
+                    vibrate: [200, 100, 200],
+                  });
+                });
+              } else {
+                new Notification("CampusPool Driver", {
+                  body: `New booking request from ${data.name || "a passenger"}`,
+                  icon: "/favicon.ico",
+                });
+              }
+            }
             fetchBookings(); // Fetch new bookings immediately
           }
         } catch (e) {
@@ -646,7 +702,12 @@ const DriverDashboard = () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ seats: seats }),
+      body: JSON.stringify({
+        seats: seats,
+        distanceKm: distanceKm,
+        customFare: isFreeRide ? 0 : customFare,
+        isFreeRide: isFreeRide,
+      }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -662,6 +723,9 @@ const DriverDashboard = () => {
               distanceKm: distanceKm,
               isFreeRide: isFreeRide,
               estimatedDurationMins: estimatedDurationMins,
+              costPerSeat: isFreeRide ? 0 : customFare,
+              customFare: isFreeRide ? 0 : customFare,
+              fare: isFreeRide ? 0 : customFare,
             }),
           })
             .then((resRoute) => resRoute.json())
@@ -698,9 +762,7 @@ const DriverDashboard = () => {
               "✅ Ride Completed! Showing summary...\nDistance: " +
                 distanceKm +
                 "km\nEarnings: " +
-                (isFreeRide
-                  ? "₹0"
-                  : `₹${((distanceKm * 5) / seats).toFixed(0)}/seat`),
+                (isFreeRide ? "₹0" : `₹${customFare}/seat`),
             );
             setCurrentRideId(null);
             setRideStatus("PENDING");
@@ -1154,11 +1216,23 @@ const DriverDashboard = () => {
                 🌱 Free Ride (No Fee)
               </label>
             </div>
+            {!isFreeRide && maxFare > 0 && (
+              <div className="flex flex-col gap-1 mt-2">
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                  Set Fare: ₹{customFare}
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max={maxFare}
+                  value={customFare}
+                  onChange={(e) => setCustomFare(Number(e.target.value))}
+                  className="w-full accent-teal-600"
+                />
+              </div>
+            )}
             <div className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-2">
-              Fare:{" "}
-              {isFreeRide
-                ? "₹0"
-                : `₹${((distanceKm * 5) / seats).toFixed(0)} / seat`}
+              Fare: {isFreeRide ? "₹0" : `₹${customFare} / seat`}
             </div>
             <button
               onClick={handlePublishRide}

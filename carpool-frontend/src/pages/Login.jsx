@@ -263,6 +263,9 @@ const Login = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
+                  autoComplete={
+                    isRegistering ? "new-password" : "current-password"
+                  }
                   className="w-full p-3 rounded-lg border border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-teal-500 bg-white dark:bg-slate-700 dark:text-white dark:placeholder-slate-400"
                   required
                 />
@@ -278,6 +281,7 @@ const Login = () => {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
+                    autoComplete="new-password"
                     className="w-full p-3 rounded-lg border border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-teal-500 bg-white dark:bg-slate-700 dark:text-white dark:placeholder-slate-400"
                     required={isRegistering}
                   />

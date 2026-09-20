@@ -143,6 +143,11 @@ public class RideDAO {
 
     public boolean saveRouteDetails(int rideId, String routeJson, double distanceKm, boolean isFreeRide,
             int estimatedDurationMins) {
+        return saveRouteDetails(rideId, routeJson, distanceKm, isFreeRide, estimatedDurationMins, null);
+    }
+
+    public boolean saveRouteDetails(int rideId, String routeJson, double distanceKm, boolean isFreeRide,
+            int estimatedDurationMins, Double customCost) {
         // Constraint 1: Strictly enforce Longitude Latitude order (e.g.,
         // LINESTRING(76.21 10.52, 76.22 10.53))
         String linestringWkt = null;
@@ -166,29 +171,35 @@ public class RideDAO {
             System.err.println("Error constructing LINESTRING WKT: " + e.getMessage());
         }
 
-        String sql = (linestringWkt != null)
-                ? "UPDATE Rides SET route_geometry = ?, distance_km = ?, cost_per_seat = ?, is_free_ride = ?, estimated_duration_mins = ?, route_linestring = ST_GeomFromText(?, 4326) WHERE ride_id = ?"
-                : "UPDATE Rides SET route_geometry = ?, distance_km = ?, cost_per_seat = ?, is_free_ride = ?, estimated_duration_mins = ? WHERE ride_id = ?";
-
+        ensureFareColumnExists();
         int availableSeats = getAvailableSeats(rideId);
         if (availableSeats <= 0)
             availableSeats = 1; // Prevent division by zero
 
-        double costPerSeat = isFreeRide ? 0.0 : Math.round(((distanceKm * 5.0) / availableSeats) * 100.0) / 100.0;
+        double maxFare = Math.floor(((distanceKm * 5.0) / availableSeats) / 2.0);
+        double finalFare = isFreeRide ? 0.0
+                : (customCost != null ? Math.min(customCost, maxFare) : maxFare);
+        if (finalFare < 0.0)
+            finalFare = 0.0;
+
+        String sql = (linestringWkt != null)
+                ? "UPDATE Rides SET route_geometry = ?, distance_km = ?, cost_per_seat = ?, fare = ?, is_free_ride = ?, estimated_duration_mins = ?, route_linestring = ST_GeomFromText(?, 4326) WHERE ride_id = ?"
+                : "UPDATE Rides SET route_geometry = ?, distance_km = ?, cost_per_seat = ?, fare = ?, is_free_ride = ?, estimated_duration_mins = ? WHERE ride_id = ?";
 
         try (Connection conn = DatabaseConnection.getConnection();
                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, routeJson);
             pstmt.setDouble(2, distanceKm);
-            pstmt.setDouble(3, costPerSeat);
-            pstmt.setBoolean(4, isFreeRide);
-            pstmt.setInt(5, estimatedDurationMins);
+            pstmt.setDouble(3, finalFare);
+            pstmt.setDouble(4, finalFare);
+            pstmt.setBoolean(5, isFreeRide);
+            pstmt.setInt(6, estimatedDurationMins);
             if (linestringWkt != null) {
-                pstmt.setString(6, linestringWkt);
-                pstmt.setInt(7, rideId);
+                pstmt.setString(7, linestringWkt);
+                pstmt.setInt(8, rideId);
             } else {
-                pstmt.setInt(6, rideId);
+                pstmt.setInt(7, rideId);
             }
 
             int rows = pstmt.executeUpdate();
@@ -323,9 +334,27 @@ public class RideDAO {
         return activeRides;
     }
 
+    public static void ensureFareColumnExists() {
+        try (Connection conn = DatabaseConnection.getConnection();
+                java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE Rides ADD COLUMN fare DOUBLE DEFAULT 0.0");
+        } catch (SQLException ignore) {
+            // Column already exists
+        }
+    }
+
     // 5. Method to create a new ride and return the generated ID
     public int createRide(int driverId, int totalSeats) {
-        String sql = "INSERT INTO Rides (driver_id, total_seats, available_seats) VALUES (?, ?, ?)";
+        return createRide(driverId, totalSeats, 0.0, 0.0, false);
+    }
+
+    public int createRide(int driverId, int totalSeats, double fare) {
+        return createRide(driverId, totalSeats, fare, 0.0, false);
+    }
+
+    public int createRide(int driverId, int totalSeats, double fare, double distanceKm, boolean isFreeRide) {
+        ensureFareColumnExists();
+        String sql = "INSERT INTO Rides (driver_id, total_seats, available_seats, cost_per_seat, fare, distance_km, is_free_ride) VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DatabaseConnection.getConnection();
                 PreparedStatement pstmt = conn.prepareStatement(sql, java.sql.Statement.RETURN_GENERATED_KEYS)) {
 
@@ -333,6 +362,10 @@ public class RideDAO {
             pstmt.setInt(1, driverId);
             pstmt.setInt(2, actualSeats);
             pstmt.setInt(3, actualSeats);
+            pstmt.setDouble(4, fare);
+            pstmt.setDouble(5, fare);
+            pstmt.setDouble(6, distanceKm);
+            pstmt.setBoolean(7, isFreeRide);
             pstmt.executeUpdate();
 
             try (ResultSet rs = pstmt.getGeneratedKeys()) {
@@ -341,9 +374,133 @@ public class RideDAO {
                 }
             }
         } catch (SQLException e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error inserting ride with fare: " + e.getMessage());
+            // Fallback to basic insert
+            String fallbackSql = "INSERT INTO Rides (driver_id, total_seats, available_seats) VALUES (?, ?, ?)";
+            try (Connection conn = DatabaseConnection.getConnection();
+                    PreparedStatement pstmt = conn.prepareStatement(fallbackSql,
+                            java.sql.Statement.RETURN_GENERATED_KEYS)) {
+                int actualSeats = Math.max(1, totalSeats);
+                pstmt.setInt(1, driverId);
+                pstmt.setInt(2, actualSeats);
+                pstmt.setInt(3, actualSeats);
+                pstmt.executeUpdate();
+                try (ResultSet rs = pstmt.getGeneratedKeys()) {
+                    if (rs.next()) {
+                        return rs.getInt(1);
+                    }
+                }
+            } catch (SQLException ex) {
+                System.err.println("Fallback error: " + ex.getMessage());
+            }
         }
         return -1;
+    }
+
+    public List<Map<String, Object>> getActiveRidesForScan() {
+        ensureFareColumnExists();
+        List<Map<String, Object>> activeRides = new ArrayList<>();
+        String sql = "SELECT r.ride_id, r.driver_id, r.total_seats, r.available_seats, r.route_geometry, " +
+                "r.status, r.distance_km, r.cost_per_seat, r.fare, r.is_free_ride, r.origin_lat, r.origin_lng, " +
+                "u.name AS driver_name, u.email AS driver_email, u.phone_number AS driver_phone, " +
+                "v.make, v.model, v.license_plate, v.color " +
+                "FROM Rides r " +
+                "JOIN Users u ON r.driver_id = u.user_id " +
+                "LEFT JOIN Vehicles v ON u.user_id = v.user_id " +
+                "WHERE r.available_seats > 0 AND r.route_geometry IS NOT NULL " +
+                "AND (r.status IN ('PENDING', 'IN_TRANSIT') OR r.status IS NULL)";
+
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql);
+                ResultSet rs = pstmt.executeQuery()) {
+
+            ObjectMapper mapper = new ObjectMapper();
+
+            while (rs.next()) {
+                Map<String, Object> ride = new java.util.HashMap<>();
+                int rideId = rs.getInt("ride_id");
+                int driverId = rs.getInt("driver_id");
+                int totalSeats = rs.getInt("total_seats");
+                int availableSeats = rs.getInt("available_seats");
+                String status = rs.getString("status");
+                double distanceKm = rs.getDouble("distance_km");
+                double costPerSeat = rs.getDouble("cost_per_seat");
+                double fare = rs.getDouble("fare");
+                if (fare == 0.0 && costPerSeat > 0.0)
+                    fare = costPerSeat;
+                if (costPerSeat == 0.0 && fare > 0.0)
+                    costPerSeat = fare;
+                boolean isFreeRide = rs.getBoolean("is_free_ride");
+                double originLat = rs.getDouble("origin_lat");
+                double originLng = rs.getDouble("origin_lng");
+
+                String driverName = rs.getString("driver_name");
+                String driverEmail = rs.getString("driver_email");
+                String driverPhone = rs.getString("driver_phone");
+
+                String vehicleMake = rs.getString("make");
+                String vehicleModel = rs.getString("model");
+                String licensePlate = rs.getString("license_plate");
+                String carColor = rs.getString("color");
+
+                String routeGeometryStr = rs.getString("route_geometry");
+
+                ride.put("rideId", rideId);
+                ride.put("ride_id", rideId);
+                ride.put("driverId", driverId);
+                ride.put("driver_id", driverId);
+                ride.put("totalSeats", totalSeats);
+                ride.put("total_seats", totalSeats);
+                ride.put("availableSeats", availableSeats);
+                ride.put("available_seats", availableSeats);
+                ride.put("status", status != null ? status : "PENDING");
+                ride.put("distanceKm", distanceKm);
+                ride.put("distance_km", distanceKm);
+                ride.put("costPerSeat", costPerSeat);
+                ride.put("cost_per_seat", costPerSeat);
+                ride.put("fare", fare);
+                ride.put("isFreeRide", isFreeRide);
+                ride.put("is_free_ride", isFreeRide);
+                ride.put("freeRide", isFreeRide);
+                ride.put("origin_lat", originLat);
+                ride.put("origin_lng", originLng);
+                ride.put("originLat", originLat);
+                ride.put("originLng", originLng);
+
+                ride.put("driverName", driverName);
+                ride.put("driver_name", driverName);
+                ride.put("driverEmail", driverEmail);
+                ride.put("driverPhone", driverPhone);
+
+                ride.put("vehicleMake", vehicleMake);
+                ride.put("make", vehicleMake);
+                ride.put("vehicleModel", vehicleModel);
+                ride.put("model", vehicleModel);
+                ride.put("licensePlate", licensePlate);
+                ride.put("license_plate", licensePlate);
+                ride.put("carColor", carColor);
+                ride.put("color", carColor);
+
+                ride.put("route_geometry", routeGeometryStr != null ? routeGeometryStr : "[]");
+                try {
+                    if (routeGeometryStr != null && !routeGeometryStr.trim().isEmpty()) {
+                        List<Coordinate> coords = mapper.readValue(routeGeometryStr,
+                                new TypeReference<List<Coordinate>>() {
+                                });
+                        ride.put("routeGeometry", coords);
+                    } else {
+                        ride.put("routeGeometry", new ArrayList<>());
+                    }
+                } catch (Exception e) {
+                    ride.put("routeGeometry", new ArrayList<>());
+                }
+
+                activeRides.add(ride);
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching active rides for scan: " + e.getMessage());
+        }
+        return activeRides;
     }
 
     // 6. Get Student Bookings (fully hydrated with driver, vehicle, and route data)
@@ -495,6 +652,34 @@ public class RideDAO {
                 return rs.getInt("ride_id");
         } catch (SQLException e) {
             System.err.println("Error getting ride_id: " + e.getMessage());
+        }
+        return -1;
+    }
+
+    public int getPassengerIdByBookingId(int bookingId) {
+        String sql = "SELECT passenger_id FROM Bookings WHERE booking_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, bookingId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next())
+                return rs.getInt("passenger_id");
+        } catch (SQLException e) {
+            System.err.println("Error getting passenger_id: " + e.getMessage());
+        }
+        return -1;
+    }
+
+    public int getDriverIdByRideId(int rideId) {
+        String sql = "SELECT driver_id FROM Rides WHERE ride_id = ?";
+        try (Connection conn = DatabaseConnection.getConnection();
+                PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, rideId);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next())
+                return rs.getInt("driver_id");
+        } catch (SQLException e) {
+            System.err.println("Error getting driver_id: " + e.getMessage());
         }
         return -1;
     }

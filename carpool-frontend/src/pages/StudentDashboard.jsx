@@ -444,10 +444,20 @@ const StudentDashboard = () => {
               "Notification" in window &&
               Notification.permission === "granted"
             ) {
-              new Notification("CampusPool Update", {
-                body: "Your ride request was accepted.",
-                icon: "/favicon.ico",
-              });
+              if (navigator.serviceWorker) {
+                navigator.serviceWorker.ready.then((registration) => {
+                  registration.showNotification("CampusPool Update", {
+                    body: "Your ride request was accepted.",
+                    icon: "/favicon.ico",
+                    vibrate: [200, 100, 200],
+                  });
+                });
+              } else {
+                new Notification("CampusPool Update", {
+                  body: "Your ride request was accepted.",
+                  icon: "/favicon.ico",
+                });
+              }
             }
             fetchMyBookings();
             return;
@@ -471,10 +481,20 @@ const StudentDashboard = () => {
               "Notification" in window &&
               Notification.permission === "granted"
             ) {
-              new Notification("CampusPool Update", {
-                body: "Your driver has arrived!",
-                icon: "/favicon.ico",
-              });
+              if (navigator.serviceWorker) {
+                navigator.serviceWorker.ready.then((registration) => {
+                  registration.showNotification("CampusPool Update", {
+                    body: "Your driver has arrived!",
+                    icon: "/favicon.ico",
+                    vibrate: [200, 100, 200],
+                  });
+                });
+              } else {
+                new Notification("CampusPool Update", {
+                  body: "Your driver has arrived!",
+                  icon: "/favicon.ico",
+                });
+              }
             }
             return;
           }

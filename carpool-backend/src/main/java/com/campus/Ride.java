@@ -200,7 +200,24 @@ public class Ride {
         return isFreeRide;
     }
 
+    public boolean getIsFreeRide() {
+        return isFreeRide;
+    }
+
     public void setFreeRide(boolean isFreeRide) {
         this.isFreeRide = isFreeRide;
+    }
+
+    private double fare;
+
+    public double getFare() {
+        return fare > 0 ? fare : costPerSeat;
+    }
+
+    public void setFare(double fare) {
+        this.fare = fare;
+        if (this.costPerSeat == 0.0) {
+            this.costPerSeat = fare;
+        }
     }
 }

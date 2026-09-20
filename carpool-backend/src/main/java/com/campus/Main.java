@@ -28,9 +28,24 @@ public class Main {
     static Map<Integer, Coordinate> driverLocations = new ConcurrentHashMap<>();
     static Map<Integer, Coordinate> passengerLocations = new ConcurrentHashMap<>();
     static Map<Integer, Set<WsContext>> rideSessions = new ConcurrentHashMap<>();
+    static Map<Integer, Set<WsContext>> userSessions = new ConcurrentHashMap<>();
     public static final Set<WsContext> publicChatSessions = ConcurrentHashMap.newKeySet();
 
     static Map<Integer, List<Map<String, Object>>> rideChats = new ConcurrentHashMap<>();
+
+    public static void sendToUser(int userId, String payload) {
+        Set<WsContext> sessions = userSessions.get(userId);
+        if (sessions != null && !sessions.isEmpty()) {
+            for (WsContext session : sessions) {
+                if (session.session.isOpen()) {
+                    try {
+                        session.send(payload);
+                    } catch (Exception ignore) {
+                    }
+                }
+            }
+        }
+    }
 
     public static void main(String[] args) {
         ObjectMapper mapper = new ObjectMapper();
@@ -107,9 +122,13 @@ public class Main {
                     "FOREIGN KEY (driver_id) REFERENCES Users(user_id)" +
                     ")");
 
-            // Migration: Ensure created_at exists on Rides table
+            // Migration: Ensure created_at and fare exist on Rides table
             try {
                 stmt.execute("ALTER TABLE Rides ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+            } catch (SQLException ignore) {
+            }
+            try {
+                stmt.execute("ALTER TABLE Rides ADD COLUMN fare DOUBLE DEFAULT 0.0");
             } catch (SQLException ignore) {
             }
 
@@ -189,7 +208,7 @@ public class Main {
         app.get("/api/status", ctx -> ctx.result("Backend is live and ready!"));
 
         // 2. Booking Endpoint
-        app.post("/api/book", ctx -> {
+        io.javalin.http.Handler bookingHandler = ctx -> {
             try {
                 String token = authService.extractToken(ctx);
                 if (token == null) {
@@ -223,14 +242,28 @@ public class Main {
                 boolean success = rideDAO.bookSeatInDatabase(rideId, passengerId, pickupLat, pickupLng);
                 if (success) {
                     ctx.status(200).json(Map.of("message", "Booking requested! Waiting for driver approval."));
+
+                    int driverId = rideDAO.getDriverIdByRideId(rideId);
+                    String passengerName = userDAO.getUserNameById(passengerId);
+                    if (passengerName == null || passengerName.isBlank()) {
+                        passengerName = "A Passenger";
+                    }
+
+                    String bookingMsg = "{\"type\": \"NEW_BOOKING_REQUEST\", \"passengerId\": " + passengerId
+                            + ", \"name\": \"" + passengerName + "\"}";
+
+                    if (driverId != -1) {
+                        sendToUser(driverId, bookingMsg);
+                    }
+
                     Set<WsContext> sessions = rideSessions.get(rideId);
                     if (sessions != null && !sessions.isEmpty()) {
-                        String passengerName = userDAO.getUserNameById(passengerId);
                         for (WsContext session : sessions) {
-                            try {
-                                session.send("{\"type\": \"NEW_BOOKING_REQUEST\", \"passengerId\": " + passengerId
-                                        + ", \"name\": \"" + passengerName + "\"}");
-                            } catch (Exception e) {
+                            if (session.session.isOpen()) {
+                                try {
+                                    session.send(bookingMsg);
+                                } catch (Exception e) {
+                                }
                             }
                         }
                     }
@@ -241,7 +274,10 @@ public class Main {
                 System.err.println("Error processing booking: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Server error processing booking."));
             }
-        });
+        };
+
+        app.post("/api/book", bookingHandler);
+        app.post("/api/rides/book", bookingHandler);
 
         // 3. Save Custom Route Endpoint
         app.post("/api/route/save/{rideId}", ctx -> {
@@ -261,8 +297,21 @@ public class Main {
                     }
                 }
 
+                Double customCost = null;
+                if (payload.containsKey("customFare") && payload.get("customFare") != null) {
+                    try {
+                        customCost = Double.parseDouble(payload.get("customFare").toString());
+                    } catch (Exception ignore) {
+                    }
+                } else if (payload.containsKey("costPerSeat") && payload.get("costPerSeat") != null) {
+                    try {
+                        customCost = Double.parseDouble(payload.get("costPerSeat").toString());
+                    } catch (Exception ignore) {
+                    }
+                }
+
                 boolean isSaved = rideDAO.saveRouteDetails(rideId, routeGeometryJson, distanceKm, isFreeRide,
-                        estimatedDurationMins);
+                        estimatedDurationMins, customCost);
                 if (isSaved)
                     ctx.status(200).json(Map.of("message", "Route saved!"));
                 else
@@ -273,36 +322,98 @@ public class Main {
             }
         });
 
-        // 4. Search Nearby Rides Endpoint
-        app.post("/api/rides/search", ctx -> {
+        // 4. Search & Scan Nearby Rides Endpoint (50m polyline filter & ETA sorting)
+        io.javalin.http.Handler scanRidesHandler = ctx -> {
             try {
-                Coordinate studentLoc = mapper.readValue(ctx.body(), Coordinate.class);
-                List<Ride> matchingRides = rideDAO.searchNearbyRides(studentLoc.getLat(), studentLoc.getLng());
+                double studentLat = 0.0;
+                double studentLng = 0.0;
+
+                if (ctx.body() != null && !ctx.body().trim().isEmpty()) {
+                    try {
+                        Map<String, Object> body = mapper.readValue(ctx.body(),
+                                new TypeReference<Map<String, Object>>() {
+                                });
+                        if (body.containsKey("lat") && body.get("lat") != null) {
+                            studentLat = Double.parseDouble(body.get("lat").toString());
+                        } else if (body.containsKey("latitude") && body.get("latitude") != null) {
+                            studentLat = Double.parseDouble(body.get("latitude").toString());
+                        }
+                        if (body.containsKey("lng") && body.get("lng") != null) {
+                            studentLng = Double.parseDouble(body.get("lng").toString());
+                        } else if (body.containsKey("longitude") && body.get("longitude") != null) {
+                            studentLng = Double.parseDouble(body.get("longitude").toString());
+                        }
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                if (studentLat == 0.0 && studentLng == 0.0) {
+                    String latParam = ctx.queryParam("lat");
+                    String lngParam = ctx.queryParam("lng");
+                    if (latParam != null && lngParam != null) {
+                        try {
+                            studentLat = Double.parseDouble(latParam);
+                            studentLng = Double.parseDouble(lngParam);
+                        } catch (Exception ignore) {
+                        }
+                    }
+                }
+
+                List<Map<String, Object>> activeRides = rideDAO.getActiveRidesForScan();
+                List<Map<String, Object>> matchingRides = new ArrayList<>();
+
+                for (Map<String, Object> ride : activeRides) {
+                    Object routeGeomObj = ride.get("route_geometry");
+                    String routeGeomStr = routeGeomObj != null ? routeGeomObj.toString() : "[]";
+                    double dist = GeoUtils.distanceToPolyline(studentLat, studentLng, routeGeomStr);
+
+                    // Filter out any ride where dist > 0.05 (50 meters)
+                    if (dist <= 0.05) {
+                        int rideId = Integer.parseInt(ride.get("rideId").toString());
+                        double driverLat = 0.0;
+                        double driverLng = 0.0;
+
+                        if (driverLocations.containsKey(rideId)) {
+                            Coordinate dLoc = driverLocations.get(rideId);
+                            driverLat = dLoc.getLat();
+                            driverLng = dLoc.getLng();
+                        } else if (ride.containsKey("origin_lat") && ride.get("origin_lat") != null
+                                && Double.parseDouble(ride.get("origin_lat").toString()) != 0.0) {
+                            driverLat = Double.parseDouble(ride.get("origin_lat").toString());
+                            driverLng = Double.parseDouble(ride.get("origin_lng").toString());
+                        } else if (ride.get("routeGeometry") instanceof List
+                                && !((List<?>) ride.get("routeGeometry")).isEmpty()) {
+                            Object first = ((List<?>) ride.get("routeGeometry")).get(0);
+                            if (first instanceof Coordinate) {
+                                driverLat = ((Coordinate) first).getLat();
+                                driverLng = ((Coordinate) first).getLng();
+                            }
+                        }
+
+                        double driverDistance = GeoUtils.haversine(driverLat, driverLng, studentLat, studentLng);
+                        ride.put("driverDistanceKm", driverDistance);
+                        int etaMins = (int) Math.max(1, Math.round((driverDistance / 30.0) * 60.0));
+                        ride.put("etaMinutes", etaMins);
+
+                        matchingRides.add(ride);
+                    }
+                }
+
+                // Sort ascending by driver distance to student (fastest ETA first)
+                matchingRides.sort((r1, r2) -> Double.compare(
+                        (Double) r1.get("driverDistanceKm"),
+                        (Double) r2.get("driverDistanceKm")));
+
                 ctx.status(200).json(matchingRides);
             } catch (Exception e) {
-                System.err.println("Error searching rides: " + e.getMessage());
-                ctx.status(500).json(Map.of("error", "Failed to search for rides."));
+                System.err.println("Error in rides scan/search endpoint: " + e.getMessage());
+                ctx.status(500).json(Map.of("error", "Failed to scan for nearby rides."));
             }
-        });
+        };
 
-        app.get("/api/rides/search", ctx -> {
-            try {
-                String latParam = ctx.queryParam("lat");
-                String lngParam = ctx.queryParam("lng");
-                if (latParam != null && lngParam != null) {
-                    double lat = Double.parseDouble(latParam);
-                    double lng = Double.parseDouble(lngParam);
-                    List<Ride> matchingRides = rideDAO.searchNearbyRides(lat, lng);
-                    ctx.status(200).json(matchingRides);
-                } else {
-                    List<Ride> allRides = rideDAO.getAllActiveRides();
-                    ctx.status(200).json(allRides);
-                }
-            } catch (Exception e) {
-                System.err.println("Error searching rides via GET: " + e.getMessage());
-                ctx.status(500).json(Map.of("error", "Failed to search for rides."));
-            }
-        });
+        app.post("/api/rides/scan", scanRidesHandler);
+        app.post("/api/rides/search", scanRidesHandler);
+        app.get("/api/rides/search", scanRidesHandler);
 
         // 5. Admin: Get Pending Users
         app.get("/api/admin/pending", ctx -> {
@@ -398,13 +509,64 @@ public class Main {
                     return;
                 }
 
-                Map<String, Integer> request = mapper.readValue(ctx.body(), new TypeReference<Map<String, Integer>>() {
+                Map<String, Object> request = mapper.readValue(ctx.body(), new TypeReference<Map<String, Object>>() {
                 });
-                int seats = request.get("seats");
-                int newRideId = rideDAO.createRide(driverId, seats);
+
+                int seats = 3;
+                if (request.containsKey("seats") && request.get("seats") != null) {
+                    try {
+                        seats = Integer.parseInt(request.get("seats").toString());
+                    } catch (Exception ignore) {
+                    }
+                }
+                if (seats <= 0)
+                    seats = 1;
+
+                double distanceKm = 0.0;
+                if (request.containsKey("distanceKm") && request.get("distanceKm") != null) {
+                    try {
+                        distanceKm = Double.parseDouble(request.get("distanceKm").toString());
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                boolean isFreeRide = false;
+                if (request.containsKey("isFreeRide") && request.get("isFreeRide") != null) {
+                    try {
+                        isFreeRide = Boolean.parseBoolean(request.get("isFreeRide").toString());
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                double customFare = 0.0;
+                if (request.containsKey("customFare") && request.get("customFare") != null) {
+                    try {
+                        customFare = Double.parseDouble(request.get("customFare").toString());
+                    } catch (Exception ignore) {
+                    }
+                } else if (request.containsKey("fare") && request.get("fare") != null) {
+                    try {
+                        customFare = Double.parseDouble(request.get("fare").toString());
+                    } catch (Exception ignore) {
+                    }
+                } else if (request.containsKey("costPerSeat") && request.get("costPerSeat") != null) {
+                    try {
+                        customFare = Double.parseDouble(request.get("costPerSeat").toString());
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                // Strict server-side recalculation of max allowed fare to prevent spoofing
+                double maxFare = Math.floor(((distanceKm * 5.0) / seats) / 2.0);
+                double finalFare = isFreeRide ? 0.0 : Math.min(customFare, maxFare);
+                if (finalFare < 0.0)
+                    finalFare = 0.0;
+
+                int newRideId = rideDAO.createRide(driverId, seats, finalFare, distanceKm, isFreeRide);
 
                 if (newRideId > 0)
-                    ctx.status(200).json(Map.of("message", "Ride initialized!", "rideId", newRideId));
+                    ctx.status(200)
+                            .json(Map.of("message", "Ride initialized!", "rideId", newRideId, "fare", finalFare));
                 else
                     ctx.status(400).json(Map.of("error", "Failed to create ride."));
             } catch (Exception e) {
@@ -744,15 +906,32 @@ public class Main {
             }
         });
 
-        app.post("/api/bookings/{bookingId}/{action}", ctx -> {
+        io.javalin.http.Handler bookingActionHandler = ctx -> {
             try {
-                int bookingId = Integer.parseInt(ctx.pathParam("bookingId"));
-                String action = ctx.pathParam("action");
+                String bIdStr = ctx.pathParamMap().containsKey("bookingId") ? ctx.pathParam("bookingId")
+                        : (ctx.pathParamMap().containsKey("id") ? ctx.pathParam("id") : null);
+                if (bIdStr == null) {
+                    ctx.status(400).json(Map.of("error", "Missing booking ID"));
+                    return;
+                }
+                int bookingId = Integer.parseInt(bIdStr);
+
+                String action = ctx.pathParamMap().get("action");
+                if (action == null) {
+                    if (ctx.path().endsWith("/accept")) {
+                        action = "accept";
+                    } else if (ctx.path().endsWith("/arrived")) {
+                        action = "arrived";
+                    }
+                }
+
                 int rideId = rideDAO.getRideIdByBookingId(bookingId);
                 if (rideId == -1) {
                     ctx.status(404).json(Map.of("error", "Booking not found"));
                     return;
                 }
+
+                int studentId = rideDAO.getPassengerIdByBookingId(bookingId);
 
                 String newStatus;
                 String wsType;
@@ -774,12 +953,22 @@ public class Main {
                 boolean success = rideDAO.updateBookingStatus(bookingId, newStatus);
                 if (success) {
                     ctx.status(200).json(Map.of("message", "Booking updated to " + newStatus));
+                    String eventPayload = "{\"type\": \"" + wsType + "\"}";
+
+                    // Dispatch to Student's active private WebSocket connection
+                    if (studentId != -1) {
+                        sendToUser(studentId, eventPayload);
+                    }
+
+                    // Also dispatch to active sessions on the ride
                     Set<WsContext> sessions = rideSessions.get(rideId);
                     if (sessions != null && !sessions.isEmpty()) {
                         for (WsContext session : sessions) {
-                            try {
-                                session.send("{\"type\": \"" + wsType + "\"}");
-                            } catch (Exception e) {
+                            if (session.session.isOpen()) {
+                                try {
+                                    session.send(eventPayload);
+                                } catch (Exception e) {
+                                }
                             }
                         }
                     }
@@ -789,7 +978,11 @@ public class Main {
             } catch (Exception e) {
                 ctx.status(500).json(Map.of("error", "Server error"));
             }
-        });
+        };
+
+        app.post("/api/bookings/{bookingId}/{action}", bookingActionHandler);
+        app.post("/api/bookings/{id}/accept", bookingActionHandler);
+        app.post("/api/bookings/{id}/arrived", bookingActionHandler);
 
         // 15. Live Location Updates
         app.post("/api/location/update", ctx -> {
@@ -1357,6 +1550,7 @@ public class Main {
                                 ctx.attribute("userName", name);
                                 ctx.attribute("userRole", role);
                             }
+                            userSessions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(ctx);
                         }
                     }
                     int rideId = Integer.parseInt(ctx.pathParam("rideId"));
@@ -1425,6 +1619,16 @@ public class Main {
                             rideSessions.remove(rideId);
                         }
                     }
+                    Integer uId = ctx.attribute("userId");
+                    if (uId != null) {
+                        Set<WsContext> uSessions = userSessions.get(uId);
+                        if (uSessions != null) {
+                            uSessions.remove(ctx);
+                            if (uSessions.isEmpty()) {
+                                userSessions.remove(uId);
+                            }
+                        }
+                    }
                 } catch (Exception e) {
                 }
             });
@@ -1439,6 +1643,16 @@ public class Main {
                             rideSessions.remove(rideId);
                         }
                     }
+                    Integer uId = ctx.attribute("userId");
+                    if (uId != null) {
+                        Set<WsContext> uSessions = userSessions.get(uId);
+                        if (uSessions != null) {
+                            uSessions.remove(ctx);
+                            if (uSessions.isEmpty()) {
+                                userSessions.remove(uId);
+                            }
+                        }
+                    }
                 } catch (Exception e) {
                 }
             });
@@ -1447,20 +1661,31 @@ public class Main {
         // Public Global Chat WebSocket
         app.ws("/ws/public-chat", ws -> {
             ws.onConnect(ctx -> {
+                int userId = -1;
                 try {
                     String token = ctx.cookie("token") != null ? ctx.cookie("token") : ctx.cookie("jwt");
-                    if (token != null) {
-                        int userId = authService.validateTokenAndGetUserId(token);
-                        if (userId != -1) {
-                            String name = userDAO.getUserNameById(userId);
-                            if (name != null && !name.isBlank()) {
-                                ctx.attribute("userName", name);
-                                ctx.attribute("userId", userId);
-                            }
-                        }
+                    if (token == null) {
+                        ctx.session.close(1008, "Unverified users cannot access global chat.");
+                        return;
                     }
+                    userId = authService.validateTokenAndGetUserId(token);
+                    if (userId == -1 || !userDAO.isUserVerified(userId)) {
+                        ctx.session.close(1008, "Unverified users cannot access global chat.");
+                        return;
+                    }
+                    String name = userDAO.getUserNameById(userId);
+                    if (name != null && !name.isBlank()) {
+                        ctx.attribute("userName", name);
+                        ctx.attribute("userId", userId);
+                    }
+                    userSessions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(ctx);
                 } catch (Exception e) {
                     System.err.println("Public chat onConnect auth error: " + e.getMessage());
+                    try {
+                        ctx.session.close(1008, "Unverified users cannot access global chat.");
+                    } catch (Exception ignore) {
+                    }
+                    return;
                 }
                 publicChatSessions.add(ctx);
                 System.out.println("New public chat connection: " + ctx.sessionId());
@@ -1498,7 +1723,30 @@ public class Main {
             });
             ws.onClose(ctx -> {
                 publicChatSessions.remove(ctx);
+                Integer uId = ctx.attribute("userId");
+                if (uId != null) {
+                    Set<WsContext> uSessions = userSessions.get(uId);
+                    if (uSessions != null) {
+                        uSessions.remove(ctx);
+                        if (uSessions.isEmpty()) {
+                            userSessions.remove(uId);
+                        }
+                    }
+                }
                 System.out.println("Public chat connection closed: " + ctx.sessionId());
+            });
+            ws.onError(ctx -> {
+                publicChatSessions.remove(ctx);
+                Integer uId = ctx.attribute("userId");
+                if (uId != null) {
+                    Set<WsContext> uSessions = userSessions.get(uId);
+                    if (uSessions != null) {
+                        uSessions.remove(ctx);
+                        if (uSessions.isEmpty()) {
+                            userSessions.remove(uId);
+                        }
+                    }
+                }
             });
         });
 

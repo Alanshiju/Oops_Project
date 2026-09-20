@@ -9,6 +9,7 @@ com\campus\Main$18.class
 com\campus\Coordinate.class
 com\campus\AuthService.class
 com\campus\Main$16.class
+com\campus\RideDAO$6.class
 com\campus\Passenger.class
 com\campus\RideDAO.class
 com\campus\Main$2.class
@@ -16,6 +17,7 @@ com\campus\Main$11.class
 com\campus\EmailService.class
 com\campus\LocationService.class
 com\campus\Main$7.class
+com\campus\Main$21.class
 com\campus\UserDAO.class
 com\campus\Driver.class
 com\campus\Main$12.class
@@ -36,4 +38,5 @@ com\campus\Main$10.class
 com\campus\Main$3.class
 com\campus\Ride.class
 com\campus\EmailService$1.class
+com\campus\GeoUtils.class
 com\campus\RideDAO$2.class

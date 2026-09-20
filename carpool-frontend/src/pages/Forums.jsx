@@ -5,20 +5,32 @@ const Forums = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [profileName, setProfileName] = useState("");
+  const [isVerified, setIsVerified] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const wsRef = useRef(null);
 
-  // Fetch current user name
+  // Fetch current user name & verification status
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/check-auth`, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && data.name) setProfileName(data.name);
+        if (data) {
+          if (data.name) setProfileName(data.name);
+          setIsVerified(Boolean(data.isVerified));
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        setIsVerified(false);
+      })
+      .finally(() => {
+        setAuthLoading(false);
+      });
   }, []);
 
   // Hydrate chat history
   useEffect(() => {
+    if (!isVerified) return;
+
     fetch(`${API_BASE_URL}/api/public-chat/history`, {
       credentials: "include",
     })
@@ -34,10 +46,12 @@ const Forums = () => {
         }
       })
       .catch((err) => console.error("Error loading forum chat history:", err));
-  }, []);
+  }, [isVerified]);
 
   // WebSocket connection
   useEffect(() => {
+    if (!isVerified) return;
+
     let reconnectTimer;
 
     const connect = () => {
@@ -72,7 +86,7 @@ const Forums = () => {
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [isVerified]);
 
   const messagesContainerRef = useRef(null);
 
@@ -97,6 +111,18 @@ const Forums = () => {
     wsRef.current.send(JSON.stringify(payload));
     setInput("");
   };
+
+  if (authLoading) {
+    return null;
+  }
+
+  if (!isVerified) {
+    return (
+      <div className="text-center mt-20 font-bold dark:text-white">
+        You must be verified by an admin to access the Global Forums.
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-80px)] bg-slate-50 dark:bg-slate-900 py-0 sm:py-4 px-0 sm:px-6 transition-colors duration-300">
