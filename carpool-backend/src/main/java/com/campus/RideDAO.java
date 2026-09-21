@@ -213,10 +213,11 @@ public class RideDAO {
 
     // 4. Method to get all active rides for spatial matching
     public List<Ride> getAllActiveRides() {
+        ensureFareColumnExists();
         List<Ride> activeRides = new ArrayList<>();
         // Only fetch rides that actually have seats and a valid route saved
         String sql = "SELECT r.ride_id, r.driver_id, r.total_seats, r.available_seats, r.route_geometry, " +
-                "r.status, r.distance_km, r.cost_per_seat, r.is_free_ride, " +
+                "r.status, r.distance_km, r.cost_per_seat, r.fare, r.is_free_ride, " +
                 "u.name AS driver_name, v.make, v.model, v.license_plate, v.color " +
                 "FROM Rides r " +
                 "JOIN Users u ON r.driver_id = u.user_id " +
@@ -245,19 +246,33 @@ public class RideDAO {
 
                 ride.setStatus(rs.getString("status"));
                 ride.setDistanceKm(rs.getDouble("distance_km"));
-                ride.setCostPerSeat(rs.getDouble("cost_per_seat"));
+                double costPerSeat = rs.getDouble("cost_per_seat");
+                double fare = rs.getDouble("fare");
+                if (fare == 0.0 && costPerSeat > 0.0)
+                    fare = costPerSeat;
+                if (costPerSeat == 0.0 && fare > 0.0)
+                    costPerSeat = fare;
+                ride.setCostPerSeat(costPerSeat);
+                ride.setFare(fare);
                 ride.setFreeRide(rs.getBoolean("is_free_ride"));
 
                 // Convert the raw JSON string back into a Java List<Coordinate>
                 String jsonGeometry = rs.getString("route_geometry");
-                List<Coordinate> geometry = mapper.readValue(jsonGeometry, new TypeReference<List<Coordinate>>() {
-                });
-                ride.setRouteGeometry(geometry);
+                try {
+                    if (jsonGeometry != null && !jsonGeometry.trim().isEmpty()) {
+                        List<Coordinate> geometry = mapper.readValue(jsonGeometry,
+                                new TypeReference<List<Coordinate>>() {
+                                });
+                        ride.setRouteGeometry(geometry);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing geometry for ride " + ride.getRideId() + ": " + e.getMessage());
+                }
 
                 activeRides.add(ride);
             }
-        } catch (SQLException | JsonProcessingException e) {
-            System.err.println("Error: " + e.getMessage());
+        } catch (SQLException e) {
+            System.err.println("Error fetching all active rides: " + e.getMessage());
         }
         return activeRides;
     }

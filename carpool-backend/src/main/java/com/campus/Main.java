@@ -322,7 +322,21 @@ public class Main {
             }
         });
 
-        // 4. Search & Scan Nearby Rides Endpoint (50m polyline filter & ETA sorting)
+        // 4a. Homepage: Search Published Rides (All Active Rides, No Spatial Math)
+        io.javalin.http.Handler searchRidesHandler = ctx -> {
+            try {
+                List<Ride> rides = rideDAO.getAllActiveRides();
+                ctx.status(200).json(rides);
+            } catch (Exception e) {
+                System.err.println("Error fetching active rides for search: " + e.getMessage());
+                ctx.status(500).json(Map.of("error", "Failed to fetch active rides."));
+            }
+        };
+
+        app.get("/api/rides/search", searchRidesHandler);
+        app.post("/api/rides/search", searchRidesHandler);
+
+        // 4b. Student Dashboard: Scan Nearby Rides (50m polyline filter & ETA sorting)
         io.javalin.http.Handler scanRidesHandler = ctx -> {
             try {
                 double studentLat = 0.0;
@@ -406,14 +420,13 @@ public class Main {
 
                 ctx.status(200).json(matchingRides);
             } catch (Exception e) {
-                System.err.println("Error in rides scan/search endpoint: " + e.getMessage());
+                System.err.println("Error in rides scan endpoint: " + e.getMessage());
                 ctx.status(500).json(Map.of("error", "Failed to scan for nearby rides."));
             }
         };
 
         app.post("/api/rides/scan", scanRidesHandler);
-        app.post("/api/rides/search", scanRidesHandler);
-        app.get("/api/rides/search", scanRidesHandler);
+        app.get("/api/rides/scan", scanRidesHandler);
 
         // 5. Admin: Get Pending Users
         app.get("/api/admin/pending", ctx -> {

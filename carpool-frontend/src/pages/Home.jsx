@@ -1,8 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { API_BASE_URL } from "../config/api";
+
+// Fix Leaflet default marker icon paths for bundlers
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
 
 const Home = () => {
   const [role, setRole] = useState(null);
@@ -194,89 +203,142 @@ const Home = () => {
   );
 };
 
-const RoutePreviewMap = ({ routeGeometry }) => {
-  const mapRef = useRef(null);
-  const mapInstance = useRef(null);
+// React Error Boundary to catch any Leaflet / Map rendering failures safely
+class MapErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Map rendering error caught by boundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="text-xs text-slate-400 italic p-3 text-center bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 mt-3">
+          Unable to display route map.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const RoutePreviewMap = ({ ride, routeGeometry }) => {
+  const mapContainer = useRef(null);
 
   useEffect(() => {
-    if (!mapRef.current || !routeGeometry || routeGeometry.length < 2) return;
+    if (!mapContainer.current) return;
 
-    if (!mapInstance.current) {
-      mapInstance.current = L.map(mapRef.current, {
+    let map = null;
+
+    try {
+      // Initialize map
+      map = L.map(mapContainer.current, {
         attributionControl: false,
-        zoomControl: false,
-        dragging: false,
-        touchZoom: false,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false,
-      }).setView([10.5276, 76.2144], 12);
+      }).setView([10.7329, 76.2713], 11);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
-      }).addTo(mapInstance.current);
+      }).addTo(map);
+
+      // Invalidate size once container becomes visible
+      const timer = setTimeout(() => {
+        if (map) {
+          try {
+            map.invalidateSize();
+          } catch (e) {}
+        }
+      }, 100);
+
+      // Draw the pre-calculated static route
+      try {
+        const rawGeom =
+          ride?.routeGeometry || ride?.route_geometry || routeGeometry;
+
+        let latLngs = null;
+        if (rawGeom) {
+          if (typeof rawGeom === "string") {
+            latLngs = JSON.parse(rawGeom);
+          } else if (Array.isArray(rawGeom)) {
+            latLngs = rawGeom;
+          }
+        }
+
+        if (latLngs && latLngs.length > 0) {
+          // Normalize coordinate structures to [lat, lng]
+          const formattedLatLngs = latLngs
+            .map((pt) => {
+              if (Array.isArray(pt)) return [Number(pt[0]), Number(pt[1])];
+              if (pt && typeof pt === "object") {
+                const lat = pt.lat !== undefined ? pt.lat : pt.latitude;
+                const lng = pt.lng !== undefined ? pt.lng : pt.longitude;
+                return [Number(lat), Number(lng)];
+              }
+              return null;
+            })
+            .filter(
+              (pt) =>
+                pt &&
+                !isNaN(pt[0]) &&
+                !isNaN(pt[1]) &&
+                (pt[0] !== 0 || pt[1] !== 0),
+            );
+
+          if (formattedLatLngs.length > 0) {
+            const polyline = L.polyline(formattedLatLngs, {
+              color: "#0d9488",
+              weight: 5,
+            }).addTo(map);
+
+            map.fitBounds(polyline.getBounds(), { padding: [20, 20] });
+
+            // Add start and end markers
+            L.marker(formattedLatLngs[0]).addTo(map).bindPopup("Start");
+            L.marker(formattedLatLngs[formattedLatLngs.length - 1])
+              .addTo(map)
+              .bindPopup("Jyothi Engineering College");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to parse route geometry", err);
+      }
+
+      return () => {
+        clearTimeout(timer);
+        if (map) {
+          try {
+            map.remove();
+          } catch (err) {
+            console.error("Error removing map instance:", err);
+          }
+        }
+      };
+    } catch (err) {
+      console.error("Failed to initialize route map:", err);
     }
 
-    const timer = setTimeout(() => {
-      if (mapInstance.current) {
-        mapInstance.current.invalidateSize();
-      }
-    }, 100);
-
-    const latlngs = routeGeometry.map((c) => [c.lat, c.lng]);
-    const polyline = L.polyline(latlngs, {
-      color: "#0d9488",
-      weight: 4,
-    }).addTo(mapInstance.current);
-
-    const startPoint = latlngs[0];
-    const endPoint = latlngs[latlngs.length - 1];
-    const startMarker = L.circleMarker(startPoint, {
-      radius: 6,
-      fillColor: "#059669",
-      color: "#ffffff",
-      weight: 2,
-      opacity: 1,
-      fillOpacity: 1,
-    }).addTo(mapInstance.current);
-
-    const endMarker = L.circleMarker(endPoint, {
-      radius: 6,
-      fillColor: "#dc2626",
-      color: "#ffffff",
-      weight: 2,
-      opacity: 1,
-      fillOpacity: 1,
-    }).addTo(mapInstance.current);
-
-    mapInstance.current.fitBounds(polyline.getBounds(), {
-      padding: [20, 20],
-    });
-
+    // Strict cleanup
     return () => {
-      clearTimeout(timer);
-      if (polyline) polyline.remove();
-      if (startMarker) startMarker.remove();
-      if (endMarker) endMarker.remove();
-      if (mapInstance.current) {
-        mapInstance.current.remove();
-        mapInstance.current = null;
+      if (map) {
+        try {
+          map.remove();
+        } catch (err) {
+          console.error("Error removing map instance:", err);
+        }
       }
     };
-  }, [routeGeometry]);
-
-  if (!routeGeometry || routeGeometry.length < 2) {
-    return (
-      <div className="text-xs text-slate-400 italic p-3 text-center bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 mt-3">
-        No route coordinates available.
-      </div>
-    );
-  }
+  }, [ride, routeGeometry]);
 
   return (
     <div
-      ref={mapRef}
+      ref={mapContainer}
       className="w-full h-44 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 mt-3 z-0 shadow-inner"
     />
   );
@@ -470,7 +532,9 @@ const PublishedRidesViewer = () => {
 
                       {/* Route Map Preview */}
                       {isExpanded && (
-                        <RoutePreviewMap routeGeometry={ride.routeGeometry} />
+                        <MapErrorBoundary>
+                          <RoutePreviewMap ride={ride} />
+                        </MapErrorBoundary>
                       )}
                     </div>
 

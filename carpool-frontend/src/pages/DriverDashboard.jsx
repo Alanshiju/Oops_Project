@@ -417,13 +417,31 @@ const DriverDashboard = () => {
     }
 
     return () => {
+      try {
+        const map = mapInstance.current || mapRef.current;
+        if (routingControlRef.current && map) {
+          // Disconnect OSRM from the map before removing it to prevent asynchronous layer crashes
+          routingControlRef.current.setWaypoints([]);
+          if (typeof map.removeControl === "function") {
+            map.removeControl(routingControlRef.current);
+          }
+          routingControlRef.current = null;
+        }
+      } catch (e) {
+        console.warn("Safely caught OSRM cleanup error:", e);
+      }
+
       // Constraint 3: Prevent polyline memory leaks
       if (staticPolylineRef.current) {
-        staticPolylineRef.current.remove();
+        try {
+          staticPolylineRef.current.remove();
+        } catch (e) {}
         staticPolylineRef.current = null;
       }
       if (mapInstance.current) {
-        mapInstance.current.remove();
+        try {
+          mapInstance.current.remove();
+        } catch (e) {}
         mapInstance.current = null;
       }
     };
@@ -499,7 +517,7 @@ const DriverDashboard = () => {
                 navigator.serviceWorker.ready.then((registration) => {
                   registration.showNotification("CampusPool Driver", {
                     body: "SOS Emergency Triggered!",
-                    icon: "/favicon.ico",
+                    icon: "../../public/favicon.ico",
                     vibrate: [200, 100, 200],
                   });
                 });

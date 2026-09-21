@@ -621,7 +621,7 @@ const StudentDashboard = () => {
 
           setSearchStatus("Calculating spatial matches on server...");
 
-          fetch(`${API_BASE_URL}/api/rides/search`, {
+          fetch(`${API_BASE_URL}/api/rides/scan`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
