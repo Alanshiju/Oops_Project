@@ -1235,6 +1235,38 @@ public class Main {
             }
         });
 
+        app.get("/api/settings/destination", ctx -> {
+            try {
+                String locJson = rideDAO.getSetting("COLLEGE_DESTINATION");
+                if (locJson != null && !locJson.trim().isEmpty()) {
+                    ctx.status(200).json(mapper.readValue(locJson, new TypeReference<Map<String, Double>>() {
+                    }));
+                } else {
+                    ctx.status(200).json(Map.of("lat", 10.728, "lng", 76.2792));
+                }
+            } catch (Exception e) {
+                ctx.status(200).json(Map.of("lat", 10.728, "lng", 76.2792));
+            }
+        });
+
+        app.get("/api/settings/social", ctx -> {
+            try {
+                String contactJson = rideDAO.getSetting("CONTACT_INFO");
+                if (contactJson != null && !contactJson.trim().isEmpty()) {
+                    Map<String, String> contact = mapper.readValue(contactJson, new TypeReference<Map<String, String>>() {
+                    });
+                    ctx.status(200).json(Map.of(
+                            "whatsapp", contact.getOrDefault("phone", ""),
+                            "facebook", contact.getOrDefault("facebook", ""),
+                            "instagram", contact.getOrDefault("instagram", "")));
+                } else {
+                    ctx.status(200).json(Map.of("whatsapp", "", "facebook", "", "instagram", ""));
+                }
+            } catch (Exception e) {
+                ctx.status(200).json(Map.of("whatsapp", "", "facebook", "", "instagram", ""));
+            }
+        });
+
         app.post("/api/admin/settings/location", ctx -> {
             try {
                 String token = authService.extractToken(ctx);

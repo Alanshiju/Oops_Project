@@ -3,6 +3,7 @@ import {
   Routes,
   Route,
   useLocation,
+  Navigate,
 } from "react-router-dom";
 import { useState, useEffect } from "react";
 import DriverDashboard from "./pages/DriverDashboard";
@@ -48,9 +49,13 @@ function AppContent() {
       });
   }, [location.pathname]);
 
-  const hideGlobalWidget = ["/driver", "/student", "/forums"].includes(
-    location.pathname,
-  );
+  const hideGlobalWidget = [
+    "/driver",
+    "/student",
+    "/driver-dashboard",
+    "/student-dashboard",
+    "/forums",
+  ].includes(location.pathname);
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans overflow-x-hidden">
@@ -69,6 +74,15 @@ function AppContent() {
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/how-it-works" element={<HowItWorks />} />
                 <Route path="/forums" element={<Forums />} />
+
+                <Route
+                  path="/driver-dashboard"
+                  element={<Navigate to="/driver" replace />}
+                />
+                <Route
+                  path="/student-dashboard"
+                  element={<Navigate to="/student" replace />}
+                />
 
                 <Route
                   path="/driver"

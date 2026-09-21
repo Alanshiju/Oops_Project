@@ -36,35 +36,63 @@ const AdminDashboard = () => {
   });
   const [isUpdatingSocial, setIsUpdatingSocial] = useState(false);
 
+  const fetchSocialLinks = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/settings/social`);
+      if (!res.ok) {
+        console.warn(`Fetching social links failed with status: ${res.status}`);
+        return;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (data && typeof data === "object") {
+          setSocialLinks((prev) => ({ ...prev, ...data }));
+        }
+      } else {
+        console.warn("Expected JSON for social links but received plain text.");
+      }
+    } catch (err) {
+      console.error("Error fetching social links:", err);
+    }
+  };
+
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/settings/social`)
-      .then((res) => res.json())
-      .then((data) => setSocialLinks(data))
-      .catch((err) => console.error("Error fetching social links", err));
+    fetchSocialLinks();
   }, []);
 
-  const handleUpdateSocialLinks = (e) => {
+  const handleUpdateSocialLinks = async (e) => {
     e.preventDefault();
     setIsUpdatingSocial(true);
-    fetch(`${API_BASE_URL}/api/admin/settings/social`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(socialLinks),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        setIsUpdatingSocial(false);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/settings/social`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(socialLinks),
+      });
+      setIsUpdatingSocial(false);
+      const contentType = res.headers.get("content-type");
+      if (
+        res.ok &&
+        contentType &&
+        contentType.indexOf("application/json") !== -1
+      ) {
+        const data = await res.json();
         if (data.message) {
           toast.success(data.message);
         } else {
           toast.error(data.error || "Failed to update social links");
         }
-      })
-      .catch((err) => {
-        setIsUpdatingSocial(false);
-        toast.error("Error contacting server: " + err.message);
-      });
+      } else {
+        toast.error(
+          "Failed to update social links (Server error: " + res.status + ")",
+        );
+      }
+    } catch (err) {
+      setIsUpdatingSocial(false);
+      toast.error("Error contacting server: " + err.message);
+    }
   };
 
   const [campusDestination, setCampusDestination] = useState(null);
@@ -73,16 +101,34 @@ const AdminDashboard = () => {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
 
+  const fetchDestination = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/settings/destination`);
+      if (!res.ok) {
+        console.warn(
+          `Endpoint /api/settings/destination failed with status: ${res.status}`,
+        );
+        setCampusDestination(null);
+        return;
+      }
+
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        setCampusDestination(data);
+      } else {
+        console.warn("Expected JSON but received plain text for destination.");
+        setCampusDestination(null);
+      }
+    } catch (err) {
+      console.error("Error fetching destination:", err);
+      setCampusDestination(null);
+    }
+  };
+
   useEffect(() => {
     fetchDestination();
   }, []);
-
-  const fetchDestination = () => {
-    fetch(`${API_BASE_URL}/api/settings/destination`)
-      .then((res) => res.json())
-      .then((data) => setCampusDestination(data))
-      .catch((err) => console.error("Error fetching destination", err));
-  };
 
   const handleSetCampusDestination = () => {
     if (!("geolocation" in navigator)) {
@@ -91,16 +137,26 @@ const AdminDashboard = () => {
     }
     setIsUpdatingDest(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        fetch(`${API_BASE_URL}/api/admin/settings/location`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ lat, lng }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
+        try {
+          const res = await fetch(
+            `${API_BASE_URL}/api/admin/settings/location`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify(coords),
+            },
+          );
+          setIsUpdatingDest(false);
+          const contentType = res.headers.get("content-type");
+          if (
+            res.ok &&
+            contentType &&
+            contentType.indexOf("application/json") !== -1
+          ) {
+            const data = await res.json();
             if (data.message) {
               refreshSettings();
               alert("✅ " + data.message);
@@ -108,11 +164,13 @@ const AdminDashboard = () => {
             } else {
               alert("❌ " + (data.error || "Failed to update destination"));
             }
-          })
-          .catch((err) => {
-            setIsUpdatingDest(false);
-            alert("Error contacting server: " + err.message);
-          });
+          } else {
+            alert("❌ Server returned non-JSON response (" + res.status + ")");
+          }
+        } catch (err) {
+          setIsUpdatingDest(false);
+          alert("Error contacting server: " + err.message);
+        }
       },
       (err) => {
         setIsUpdatingDest(false);
@@ -187,54 +245,138 @@ const AdminDashboard = () => {
     }
   }, [settings]);
 
-  const fetchPendingUsers = () => {
-    fetch(`${API_BASE_URL}/api/admin/pending`, {
-      method: "GET",
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        setPendingUsers(data);
-        if (data.length === 0)
-          setStatusMessage("No pending verifications at this time.");
-      })
-      .catch((err) => setStatusMessage("Error connecting to the server."));
-  };
-
-  const fetchAuditLogs = () => {
-    fetch(`${API_BASE_URL}/api/admin/rides/audit`, {
-      method: "GET",
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => setAuditLogs(data))
-      .catch((err) => console.error("Error fetching audit logs", err));
-  };
-
-  const fetchAllUsers = () => {
-    fetch(`${API_BASE_URL}/api/admin/users`, { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data.error) setAllUsers(data);
+  const fetchPendingUsers = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/pending`, {
+        method: "GET",
+        credentials: "include",
       });
+      if (!res.ok) {
+        console.warn(
+          `Endpoint /api/admin/pending failed with status: ${res.status}`,
+        );
+        setPendingUsers([]);
+        setStatusMessage("Failed to load pending verifications.");
+        return;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setPendingUsers(data);
+          if (data.length === 0) {
+            setStatusMessage("No pending verifications at this time.");
+          }
+        } else {
+          setPendingUsers([]);
+          setStatusMessage("No pending verifications at this time.");
+        }
+      } else {
+        console.warn(
+          "Expected JSON but received plain text for pending users.",
+        );
+        setPendingUsers([]);
+        setStatusMessage("Error loading pending verifications.");
+      }
+    } catch (err) {
+      console.error("Error fetching pending users:", err);
+      setPendingUsers([]);
+      setStatusMessage("Error connecting to the server.");
+    }
   };
 
-  const handleToggleVerification = (userId) => {
-    fetch(`${API_BASE_URL}/api/admin/users/${userId}/status`, {
-      method: "PUT",
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => {
+  const fetchAuditLogs = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/rides/audit`, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        console.warn(
+          `Endpoint /api/admin/rides/audit failed with status: ${res.status}`,
+        );
+        setAuditLogs([]);
+        return;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        setAuditLogs(Array.isArray(data) ? data : []);
+      } else {
+        console.warn("Expected JSON but received plain text for audit logs.");
+        setAuditLogs([]);
+      }
+    } catch (err) {
+      console.error("Error fetching audit logs:", err);
+      setAuditLogs([]);
+    }
+  };
+
+  const fetchAllUsers = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        console.warn(
+          `Endpoint /api/admin/users failed with status: ${res.status}`,
+        );
+        setAllUsers([]);
+        return;
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setAllUsers(data);
+        } else if (data && !data.error && Array.isArray(data.users)) {
+          setAllUsers(data.users);
+        } else {
+          setAllUsers([]);
+        }
+      } else {
+        console.warn("Expected JSON but received plain text for users.");
+        setAllUsers([]);
+      }
+    } catch (err) {
+      console.error("Error fetching users:", err);
+      setAllUsers([]);
+    }
+  };
+
+  const handleToggleVerification = async (userId) => {
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/admin/users/${userId}/status`,
+        {
+          method: "PUT",
+          credentials: "include",
+        },
+      );
+      const contentType = res.headers.get("content-type");
+      if (
+        res.ok &&
+        contentType &&
+        contentType.indexOf("application/json") !== -1
+      ) {
+        const data = await res.json();
         if (data.message) {
           fetchAllUsers();
         } else {
-          alert("Error: " + data.error);
+          alert(
+            "Error: " + (data.error || "Failed to update user verification"),
+          );
         }
-      });
+      } else {
+        alert("Server error (" + res.status + ") updating user status");
+      }
+    } catch (err) {
+      console.error("Error toggling user verification:", err);
+      alert("Error contacting server: " + err.message);
+    }
   };
 
-  const handleDeleteUser = (userId) => {
+  const handleDeleteUser = async (userId) => {
     if (
       !window.confirm(
         "⚠️ DANGER: Are you sure you want to completely delete this user and all their associated rides, bookings, and incident reports? This action cannot be undone.",
@@ -242,57 +384,98 @@ const AdminDashboard = () => {
     )
       return;
 
-    fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
-      method: "DELETE",
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/users/${userId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const contentType = res.headers.get("content-type");
+      if (
+        res.ok &&
+        contentType &&
+        contentType.indexOf("application/json") !== -1
+      ) {
+        const data = await res.json();
         if (data.message) {
           alert("✅ " + data.message);
           fetchAllUsers();
         } else {
-          alert("❌ " + data.error);
+          alert("❌ " + (data.error || "Failed to delete user"));
         }
-      });
+      } else {
+        alert("Server error (" + res.status + ") deleting user");
+      }
+    } catch (err) {
+      console.error("Error deleting user:", err);
+      alert("Error contacting server: " + err.message);
+    }
   };
 
-  const handleApprove = (userId) => {
-    fetch(`${API_BASE_URL}/api/admin/approve/${userId}`, {
-      method: "POST",
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => {
+  const handleApprove = async (userId) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/approve/${userId}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const contentType = res.headers.get("content-type");
+      if (
+        res.ok &&
+        contentType &&
+        contentType.indexOf("application/json") !== -1
+      ) {
+        const data = await res.json();
         if (data.message) {
           alert("✅ " + data.message);
-          setPendingUsers(
-            pendingUsers.filter((user) => user.userId !== userId),
+          setPendingUsers((prev) =>
+            Array.isArray(prev)
+              ? prev.filter((user) => user.userId !== userId)
+              : [],
           );
-        } else alert("❌ " + data.error);
-      });
+        } else {
+          alert("❌ " + (data.error || "Failed to approve user"));
+        }
+      } else {
+        alert("Server error (" + res.status + ") approving user");
+      }
+    } catch (err) {
+      console.error("Error approving user:", err);
+      alert("Error contacting server: " + err.message);
+    }
   };
 
-  const handleSaveContact = (e) => {
+  const handleSaveContact = async (e) => {
     e.preventDefault();
-    fetch(`${API_BASE_URL}/api/admin/settings/contact`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(contactForm),
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/settings/contact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(contactForm),
+      });
+      const contentType = res.headers.get("content-type");
+      if (
+        res.ok &&
+        contentType &&
+        contentType.indexOf("application/json") !== -1
+      ) {
+        const data = await res.json();
         if (data.message) {
           alert("✅ " + data.message);
           refreshSettings();
         } else {
-          alert("❌ " + data.error);
+          alert("❌ " + (data.error || "Failed to save contact settings"));
         }
-      });
+      } else {
+        alert("Server error (" + res.status + ") saving contact settings");
+      }
+    } catch (err) {
+      console.error("Error saving contact settings:", err);
+      alert("Error contacting server: " + err.message);
+    }
   };
 
-  const filteredLogs = auditLogs.filter((log) => {
+  const safeAuditLogs = Array.isArray(auditLogs) ? auditLogs : [];
+  const filteredLogs = safeAuditLogs.filter((log) => {
     if (auditFilter === "ALL") return true;
     if (auditFilter === "EMERGENCY") return log.isEmergency;
     return log.status === auditFilter;
@@ -305,16 +488,19 @@ const AdminDashboard = () => {
     currentAuditPage * itemsPerPage,
   );
 
-  const totalUserPages = Math.ceil(allUsers.length / itemsPerPage) || 1;
+  const safeAllUsers = Array.isArray(allUsers) ? allUsers : [];
+  const totalUserPages = Math.ceil(safeAllUsers.length / itemsPerPage) || 1;
   const currentUserPage = Math.min(userPage, totalUserPages);
-  const paginatedUsers = allUsers.slice(
+  const paginatedUsers = safeAllUsers.slice(
     (currentUserPage - 1) * itemsPerPage,
     currentUserPage * itemsPerPage,
   );
 
-  const totalPendingPages = Math.ceil(pendingUsers.length / itemsPerPage) || 1;
+  const safePendingUsers = Array.isArray(pendingUsers) ? pendingUsers : [];
+  const totalPendingPages =
+    Math.ceil(safePendingUsers.length / itemsPerPage) || 1;
   const currentPendingPage = Math.min(pendingPage, totalPendingPages);
-  const paginatedPending = pendingUsers.slice(
+  const paginatedPending = safePendingUsers.slice(
     (currentPendingPage - 1) * itemsPerPage,
     currentPendingPage * itemsPerPage,
   );
@@ -799,7 +985,7 @@ const AdminDashboard = () => {
                 </div>
                 {allUsers.length === 0 && (
                   <div className="text-center py-10 text-slate-500 dark:text-slate-400">
-                    Loading users...
+                    No users found.
                   </div>
                 )}
                 {allUsers.length > 0 && (

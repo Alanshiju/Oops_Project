@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { API_BASE_URL, WS_BASE_URL } from "../config/api";
+import ChatWidget from "../components/ChatWidget";
 
 const pulsingDot = L.divIcon({
   className: "custom-div-icon",
@@ -738,6 +739,24 @@ const StudentDashboard = () => {
     }
   };
 
+  const handleSendRideMessage = (text) => {
+    if (!wsRef.current || !activeRideId) return;
+
+    const msg = {
+      type: "CHAT_MESSAGE",
+      senderId: -1,
+      senderName: currentUser || "",
+      targetUserId: driverId,
+      text: text,
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    wsRef.current.send(JSON.stringify(msg));
+  };
+
   const handleSos = () => {
     const rideIdToUse =
       activeRideId || (myBookings.length > 0 ? myBookings[0].rideId : null);
@@ -1236,130 +1255,13 @@ const StudentDashboard = () => {
       </div>
 
       {/* Floating Chat Widget */}
-      {activeRideId && (
-        <div className="fixed bottom-4 sm:bottom-6 right-4 sm:right-6 z-[2000] flex flex-col items-end">
-          {isChatOpen ? (
-            <div className="bg-white dark:bg-slate-800 w-[calc(100vw-2rem)] sm:w-[400px] max-w-full h-[30rem] max-h-[85vh] shadow-2xl shadow-teal-900/10 rounded-[1.5rem] overflow-hidden border border-slate-100 dark:border-slate-700 flex flex-col mb-4">
-              <div
-                className="bg-teal-600 text-white p-4 font-bold flex justify-between items-center cursor-pointer shadow-sm"
-                onClick={() => setIsChatOpen(false)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">💬</span>
-                  <span>
-                    {activeChatTab === "GLOBAL"
-                      ? "Campus Global Chat"
-                      : "Ride Chat"}
-                  </span>
-                </div>
-                <button className="hover:bg-teal-500 rounded-full w-8 h-8 flex items-center justify-center transition-colors">
-                  ✕
-                </button>
-              </div>
-
-              {/* Dual Tab Switcher */}
-              <div className="flex bg-slate-100 dark:bg-slate-900 p-1 border-b border-slate-200 dark:border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setActiveChatTab("RIDE")}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
-                    activeChatTab === "RIDE"
-                      ? "bg-white dark:bg-slate-700 shadow-sm text-teal-700 dark:text-teal-300"
-                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                  }`}
-                >
-                  Ride Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveChatTab("GLOBAL")}
-                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
-                    activeChatTab === "GLOBAL"
-                      ? "bg-white dark:bg-slate-700 shadow-sm text-teal-700 dark:text-teal-300"
-                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                  }`}
-                >
-                  Campus Global
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 bg-slate-50 dark:bg-slate-900/80">
-                {(activeChatTab === "GLOBAL"
-                  ? globalMessages
-                  : chatMessages
-                ).map((msg, i) => {
-                  const isSelf = currentUser
-                    ? msg.senderName === currentUser
-                    : false;
-                  return (
-                    <div
-                      key={i}
-                      className={`max-w-[85%] p-3 text-sm shadow-sm ${isSelf ? "bg-teal-600 text-white self-end rounded-t-2xl rounded-l-2xl rounded-br-none shadow-sm shadow-teal-700/20" : "bg-gray-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 self-start rounded-t-2xl rounded-r-2xl rounded-bl-none"}`}
-                    >
-                      <div
-                        className={`font-bold text-[10px] mb-1 ${isSelf ? "text-teal-200" : "text-slate-500 dark:text-slate-400"}`}
-                      >
-                        <span className="font-bold text-xs">
-                          {msg.senderName}
-                        </span>
-                      </div>
-                      <div className="leading-relaxed">{msg.text}</div>
-                      <div
-                        className={`text-[9px] text-right mt-1 ${isSelf ? "text-teal-300" : "text-slate-400 dark:text-slate-400"}`}
-                      >
-                        {msg.timestamp}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div
-                  ref={(el) => {
-                    if (el) el.scrollIntoView({ behavior: "smooth" });
-                  }}
-                ></div>
-              </div>
-              <form
-                onSubmit={handleSendChatMessage}
-                className="p-3 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 flex gap-2 items-center"
-              >
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Type a message..."
-                  className="flex-1 p-3 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-400 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all border border-transparent dark:border-slate-600"
-                />
-                <button
-                  type="submit"
-                  disabled={!chatInput.trim()}
-                  className="bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 text-white w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-95 shadow-md"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-5 h-5 ml-1"
-                  >
-                    <path d="M3.478 2.404a.75.75 0 00-.926.941l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.404z" />
-                  </svg>
-                </button>
-              </form>
-            </div>
-          ) : (
-            <button
-              onClick={() => setIsChatOpen(true)}
-              className="bg-teal-600 hover:bg-teal-700 text-white w-14 h-14 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.5)] flex items-center justify-center text-2xl relative transform transition-transform active:scale-95"
-            >
-              💬
-              {chatMessages.length > 0 && (
-                <span className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">
-                  {chatMessages.length}
-                </span>
-              )}
-            </button>
-          )}
-        </div>
-      )}
+      <ChatWidget
+        hasActiveRide={!!activeBooking}
+        currentUser={currentUser}
+        rideChatMessages={chatMessages}
+        onSendRideMessage={handleSendRideMessage}
+        unreadRideCount={chatMessages.length}
+      />
 
       {/* GPS Debug Badge */}
       {currentGps && (
